@@ -1,0 +1,7 @@
+.composer-container {
+	margin-block-start: -1.188rem;
+
+	&.without-margin {
+		margin-block-start: 0;
+	}
+}

@@ -1,0 +1,7 @@
+{
+    "extends": "../../tsconfig.base.json",
+    "compilerOptions": {
+        "types": ["global-types-monorepo", "webpack-env", "jasmine"],
+        "moduleResolution": "Bundler"
+    }
+}
