@@ -6,6 +6,9 @@ on:
       - 'v*.*.*'
   workflow_dispatch:
 
+permissions:
+  contents: write  # Required for uploading release assets
+
 jobs:
   build:
     strategy:
