@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Proton Drive
+Comment=Encrypted cloud storage
+Exec=proton-drive
+Icon=proton-drive
+Terminal=false
+Type=Application
+Categories=Network;FileTransfer;Utility;
+Keywords=proton;drive;cloud;storage;encryption;
+StartupNotify=true
+StartupWMClass=proton-drive

@@ -1,0 +1,65 @@
+# === Build outputs ===
+src-native/build/
+dist/
+*.AppImage
+*.rpm
+*.deb
+*.snap
+*.flatpak
+
+# === C++ ===
+*.o
+*.a
+*.so
+*.dylib
+*.d
+
+# === IDE & editors ===
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# === AI / Agent tooling (local only) ===
+.agent/
+.github/agents/
+.github/copilot-instructions.md
+
+# === Local dev scripts ===
+run-dev.sh
+
+# === Node (not needed for native build, kept for version scripts) ===
+node_modules/
+yarn.lock
+npm-debug.log*
+yarn-debug.log*
+
+# === Environment ===
+.env
+.env.local
+.env.*.local
+
+# === Legacy / not part of native project ===
+WebClients/
+tools/appimagetool
+Sync_Conflict.md
+DEBUGGING.md
+
+# === Deprecated scripts (kept locally for reference) ===
+scripts/build-webclients.sh
+scripts/create_stubs.py
+scripts/fix_deps.py
+scripts/build-local-deb.sh
+scripts/build-local-rpm.sh
+scripts/build-local-flatpak.sh
+scripts/sync-version.sh
+scripts/install-debian-ubuntu.sh
+scripts/install-all.sh
+
+# === Stale CI/CD workflows ===
+.github/workflows/
+
+# === Packaging intermediates ===
+snap/snapcraft.yaml

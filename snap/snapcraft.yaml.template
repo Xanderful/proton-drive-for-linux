@@ -1,0 +1,94 @@
+name: proton-drive
+version: "${VERSION}"
+summary: Proton Drive - Native GTK4 Desktop Client
+description: |
+  Fast, lightweight, and unofficial desktop client for Proton Drive on Linux.
+  Built with C++ and GTK4 for native performance.
+  Features cloud browsing, drag-drop upload, two-way folder sync, and system tray integration.
+grade: stable
+confinement: strict
+base: core24
+platforms:
+  amd64:
+title: Proton Drive Linux Desktop Client
+contact: https://github.com/Xanderful/proton-drive-linux/issues
+license: Apache-2.0
+
+apps:
+  proton-drive:
+    command: usr/bin/proton-drive
+    desktop: usr/share/applications/proton-drive.desktop
+    plugs:
+      - home
+      - network
+      - network-bind
+      - network-status
+      - desktop
+      - desktop-legacy
+      - x11
+      - wayland
+      - opengl
+      - password-manager-service
+      - dbus
+
+plugs:
+  dbus:
+    interface: dbus
+    bus: session
+    name: com.proton.drive
+
+parts:
+  proton-drive:
+    plugin: cmake
+    source: .
+    source-subdir: src-native
+    cmake-parameters:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DCMAKE_INSTALL_PREFIX=/usr
+    override-build: |
+      set -euo pipefail
+
+      # Build native C++/GTK4 binary
+      cd "$SNAPCRAFT_PART_SRC/src-native"
+      mkdir -p build && cd build
+      cmake .. -DCMAKE_BUILD_TYPE=Release
+      make -j$(nproc)
+
+      # Install binary
+      install -Dm755 proton-drive "$SNAPCRAFT_PART_INSTALL/usr/bin/proton-drive"
+
+      # Create desktop file
+      mkdir -p "$SNAPCRAFT_PART_INSTALL/usr/share/applications"
+      cat > "$SNAPCRAFT_PART_INSTALL/usr/share/applications/proton-drive.desktop" << 'DESKTOP'
+      [Desktop Entry]
+      Version=1.0
+      Type=Application
+      Name=Proton Drive
+      Comment=Encrypted cloud storage with two-way sync
+      Exec=proton-drive
+      Icon=proton-drive
+      Categories=Network;FileTransfer;Utility;
+      Terminal=false
+      DESKTOP
+
+      # Icons
+      mkdir -p "$SNAPCRAFT_PART_INSTALL/usr/share/icons/hicolor/scalable/apps"
+      if [ -f "$SNAPCRAFT_PART_SRC/src-native/resources/icons/proton-drive.svg" ]; then
+        cp "$SNAPCRAFT_PART_SRC/src-native/resources/icons/proton-drive.svg" \
+          "$SNAPCRAFT_PART_INSTALL/usr/share/icons/hicolor/scalable/apps/proton-drive.svg"
+      fi
+    build-packages:
+      - build-essential
+      - cmake
+      - pkg-config
+      - libgtk-4-dev
+      - libcurl4-openssl-dev
+      - libsqlite3-dev
+      - libssl-dev
+    stage-packages:
+      - libgtk-4-1
+      - libcurl4
+      - libsqlite3-0
+      - libssl3
+      - rclone
+      - fuse3
