@@ -1,0 +1,64 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'  # Triggers on version tags like v1.0.0
+  workflow_dispatch:  # Allows manual trigger
+
+jobs:
+  build-appimage:
+    runs-on: ubuntu-22.04
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake pkg-config \
+            libgtk-4-dev libcurl4-openssl-dev \
+            libsqlite3-dev libssl-dev \
+            librsvg2-bin
+      
+      - name: Install Node.js (for version reading)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      
+      - name: Install Go (for building rclone)
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+      
+      - name: Build AppImage
+        run: |
+          chmod +x scripts/build-local-appimage.sh
+          ./scripts/build-local-appimage.sh
+      
+      - name: Get version
+        id: version
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Building version: $VERSION"
+      
+      - name: Upload AppImage to Release
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            dist/ProtonDrive-${{ steps.version.outputs.version }}-x86_64.AppImage
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Upload AppImage as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ProtonDrive-AppImage
+          path: dist/*.AppImage
+          retention-days: 30
