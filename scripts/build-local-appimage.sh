@@ -319,27 +319,54 @@ if ! command -v go &> /dev/null; then
 fi
 
 echo -e "  Cloning rclone with Proton Drive upload fix (PR #9081)..."
-git clone --depth 1 -b fix-protondrive-upload https://github.com/coderFrankenstain/rclone.git rclone-fix
-cd rclone-fix
-
-echo -e "  Building rclone from source..."
-go build -o rclone-fixed
-
-if [ -f rclone-fixed ]; then
-    cp rclone-fixed "$APPDIR/usr/bin/rclone"
-    chmod +x "$APPDIR/usr/bin/rclone"
-    echo -e "  ${GREEN}✓${NC} rclone with Proton Drive upload fix bundled"
+if ! git clone --depth 1 -b fix-protondrive-upload https://github.com/coderFrankenstain/rclone.git rclone-fix 2>&1; then
+    echo -e "${RED}Error: Failed to clone rclone repository${NC}"
+    echo -e "${YELLOW}This might be due to network issues or the branch no longer existing${NC}"
+    echo -e "${YELLOW}Falling back to system rclone if available${NC}"
     
-    # Verify rclone works
-    "$APPDIR/usr/bin/rclone" version | head -n 1
+    if command -v rclone &> /dev/null; then
+        echo -e "${YELLOW}Using system rclone instead${NC}"
+        SYSTEM_RCLONE=$(which rclone)
+        cp "$SYSTEM_RCLONE" "$APPDIR/usr/bin/rclone"
+        chmod +x "$APPDIR/usr/bin/rclone"
+        cd "$PROJECT_ROOT"
+        rm -rf "$RCLONE_TEMP"
+        echo -e "${YELLOW}⚠️${NC} Using system rclone (may not have Proton Drive upload fix)"
+    else
+        echo -e "${RED}Error: No rclone available. Install rclone or fix network connection.${NC}"
+        cd "$PROJECT_ROOT"
+        rm -rf "$RCLONE_TEMP"
+        exit 1
+    fi
 else
-    echo -e "${RED}Error: rclone build failed${NC}"
-    exit 1
+    cd rclone-fix
+    
+    echo -e "  Building rclone from source..."
+    if ! CGO_ENABLED=0 go build -o rclone-fixed 2>&1; then
+        echo -e "${RED}Error: rclone build failed${NC}"
+        cd "$PROJECT_ROOT"
+        rm -rf "$RCLONE_TEMP"
+        exit 1
+    fi
+    
+    if [ -f rclone-fixed ]; then
+        cp rclone-fixed "$APPDIR/usr/bin/rclone"
+        chmod +x "$APPDIR/usr/bin/rclone"
+        echo -e "  ${GREEN}✓${NC} rclone with Proton Drive upload fix bundled"
+        
+        # Verify rclone works
+        "$APPDIR/usr/bin/rclone" version | head -n 1
+    else
+        echo -e "${RED}Error: rclone binary not found after build${NC}"
+        cd "$PROJECT_ROOT"
+        rm -rf "$RCLONE_TEMP"
+        exit 1
+    fi
+    
+    # Cleanup
+    cd "$PROJECT_ROOT"
+    rm -rf "$RCLONE_TEMP"
 fi
-
-# Cleanup
-cd "$PROJECT_ROOT"
-rm -rf "$RCLONE_TEMP"
 
 # Step 5: Bundle required libraries (optional, for maximum portability)
 echo ""

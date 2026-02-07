@@ -29,7 +29,7 @@ jobs:
             build-essential cmake pkg-config \
             libgtk-4-dev libcurl4-openssl-dev \
             libsqlite3-dev libssl-dev \
-            librsvg2-bin
+            librsvg2-bin git wget
       
       - name: Install Node.js
         uses: actions/setup-node@v4
