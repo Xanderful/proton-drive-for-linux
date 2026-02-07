@@ -1,4 +1,4 @@
-# Proton Drive Linux
+# Proton Drive for Linux
 
 ⚠️ **Unofficial Client** - This is an independent, unofficial desktop client for Proton Drive on Linux. It is not affiliated with, maintained by, or endorsed by Proton Technologies.
 
@@ -48,13 +48,12 @@ This app uses **rclone's polling mechanism** for synchronization, which has an i
 - ❌ Changes made in the web app or other clients are NOT automatically downloaded to your local machine
 - ⏱️ Cloud changes are only detected during scheduled sync intervals (default: every 15 minutes)
 
-**Why?** Proton Drive has no real-time push notification API. rclone must poll the server periodically to detect cloud changes. This is a limitation of Proton's API, not this application.
+**Why?** Proton Drive has no real-time push notification API. rclone must poll the server periodically to detect cloud changes. This is a limitation of how Rclone works Proton's API, not this application.
 
 **Recommended Workaround:**
 
 - Set sync intervals to **5-10 minutes** for active folders if you frequently make changes in the web app
 - Or manually trigger sync from the app's sync panel when you know cloud changes have been made
-- For truly real-time sync of local changes to cloud, use Syncthing or native offerings instead
 
 **Local-to-Cloud Sync is Fully Automatic:**
 
