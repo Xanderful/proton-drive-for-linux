@@ -1,0 +1,44 @@
+import { c } from 'ttag';
+
+import { getDrive } from '@proton/drive';
+
+import { useFlagsDriveSDKPreview } from '../../../../flags/useFlagsDriveSDKPreview';
+import type { usePreviewModal } from '../../../../modals/preview';
+import useOpenPreview from '../../../useOpenPreview';
+import ContextMenuButton from '../ContextMenuButton';
+
+interface Props {
+    shareId: string;
+    linkId: string;
+    nodeUid?: string;
+    showPreviewModal?: ReturnType<typeof usePreviewModal>[1];
+    close: () => void;
+}
+
+const PreviewButton = ({ shareId, linkId, nodeUid, showPreviewModal, close }: Props) => {
+    const openLegacyPreview = useOpenPreview();
+
+    const isSDKPreviewEnabled = useFlagsDriveSDKPreview();
+
+    return (
+        <ContextMenuButton
+            name={c('Action').t`Preview`}
+            icon="eye"
+            testId="context-menu-preview"
+            action={() => {
+                if (showPreviewModal && isSDKPreviewEnabled && nodeUid) {
+                    showPreviewModal({
+                        drive: getDrive(), // TODO: pass Drive client from context
+                        deprecatedContextShareId: shareId,
+                        nodeUid,
+                    });
+                } else {
+                    openLegacyPreview(shareId, linkId);
+                }
+            }}
+            close={close}
+        />
+    );
+};
+
+export default PreviewButton;

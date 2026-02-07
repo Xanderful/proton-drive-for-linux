@@ -1,0 +1,86 @@
+# Tauri
+/src-tauri/target
+/dist
+/src-tauri/tauri.conf.json.bak
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Rust
+Cargo.lock
+*.rs.bk
+target/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Build outputs
+*.AppImage
+*.rpm
+*.deb
+*.dmg
+*.exe
+*.msi
+dist/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# WebClients specific ignores
+WebClients/node_modules/
+WebClients/.yarn/cache/
+WebClients/.yarn/install-state.gz
+WebClients/.yarn/unplugged/
+WebClients/.yarn/.cache/
+WebClients/applications/*/node_modules/
+WebClients/applications/*/dist/
+WebClients/packages/*/node_modules/
+WebClients/packages/*/dist/
+WebClients/**/.turbo/
+WebClients/**/dist/
+WebClients/**/.next/
+WebClients/**/.vercel/
+WebClients/**/build/
+WebClients/**/*.tsbuildinfo
+
+# Exclude all applications except drive
+WebClients/applications/account/
+WebClients/applications/authenticator/
+WebClients/applications/calendar/
+WebClients/applications/docs/
+WebClients/applications/docs-editor/
+WebClients/applications/inbox-desktop/
+WebClients/applications/lumo/
+WebClients/applications/mail/
+WebClients/applications/meet/
+WebClients/applications/meet-desktop/
+WebClients/applications/pass/
+WebClients/applications/pass-desktop/
+WebClients/applications/pass-extension/
+WebClients/applications/pdf-ui/
+WebClients/applications/preview-sandbox/
+WebClients/applications/storybook/
+WebClients/applications/verify/
+WebClients/applications/vpn-settings/
+WebClients/applications/wallet/
+
+
+# Debug files
+DEBUGGING.md
+WebClients-test
+
+# Local build scripts (personal)
+scripts/build-local.sh
+scripts/build-flatpak.sh
+scripts/build-snap.sh

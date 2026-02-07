@@ -1,0 +1,247 @@
+name: Create Release
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g., v1.1.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  # This job waits for builds and creates a release
+  check-and-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+          else
+            # For branch pushes, get version from package.json
+            TAG="v$(node -p "require('./package.json').version")"
+          fi
+          echo "version=${TAG}" >> $GITHUB_OUTPUT
+          echo "Version: ${TAG}"
+
+      - name: Create and push tag if needed
+        run: |
+          TAG="${{ steps.version.outputs.version }}"
+
+          # Check if tag already exists on remote
+          if git ls-remote --tags origin | grep -q "refs/tags/${TAG}$"; then
+            echo "Tag ${TAG} already exists on remote, skipping creation"
+          else
+            echo "Creating tag ${TAG}..."
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git tag -a "${TAG}" -m "Release ${TAG}"
+            git push origin "${TAG}"
+            echo "Tag ${TAG} created and pushed"
+          fi
+
+      - name: Wait for all builds to complete
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const sha = context.sha;
+            console.log(`Waiting for builds for SHA: ${sha}`);
+
+            const expectedWorkflows = [
+              'Build Linux Packages',
+              'Build Snap',
+              'Build Flatpak'
+            ];
+
+            // Give workflows time to start (30 seconds)
+            await new Promise(resolve => setTimeout(resolve, 30000));
+
+            // Poll for workflow completion (max 2.5 hours)
+            const maxAttempts = 75;
+            for (let i = 0; i < maxAttempts; i++) {
+              const { data: { workflow_runs } } = await github.rest.actions.listWorkflowRunsForRepo({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                head_sha: sha,
+              });
+
+              const buildWorkflows = workflow_runs.filter(r =>
+                expectedWorkflows.includes(r.name) && r.status !== 'queued'
+              );
+
+              console.log(`Attempt ${i + 1}/${maxAttempts}: Found ${buildWorkflows.length}/${expectedWorkflows.length} workflows`);
+              console.log(`Status: ${buildWorkflows.map(r => `${r.name}:${r.status}:${r.conclusion}`).join(', ')}`);
+
+              if (buildWorkflows.length >= expectedWorkflows.length) {
+                const allComplete = buildWorkflows.every(r => r.status === 'completed');
+
+                if (allComplete) {
+                  const allSuccess = buildWorkflows.every(r => r.conclusion === 'success');
+
+                  if (allSuccess) {
+                    console.log('✅ All builds succeeded!');
+                    return;
+                  } else {
+                    const failed = buildWorkflows.filter(r => r.conclusion !== 'success').map(r => r.name).join(', ');
+                    throw new Error(`❌ Some builds failed: ${failed}`);
+                  }
+                }
+              }
+
+              if (i < maxAttempts - 1) {
+                await new Promise(resolve => setTimeout(resolve, 120000)); // Wait 2 minutes
+              }
+            }
+
+            throw new Error('⏱️ Build workflows did not complete within 2.5 hours');
+
+      - name: Download Linux packages artifacts
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          workflow: build-linux-packages.yml
+          name: linux-packages
+          path: artifacts/linux-packages
+          commit: ${{ github.sha }}
+          workflow_conclusion: success
+          search_artifacts: true
+          if_no_artifact_found: fail
+
+      - name: Download Snap artifact
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          workflow: build-snap.yml
+          name: snap-package
+          path: artifacts/snap
+          commit: ${{ github.sha }}
+          workflow_conclusion: success
+          search_artifacts: true
+          if_no_artifact_found: fail
+
+      - name: Download Flatpak artifact
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          workflow: build-flatpak.yml
+          name: flatpak-bundle
+          path: artifacts/flatpak
+          commit: ${{ github.sha }}
+          workflow_conclusion: success
+          search_artifacts: true
+          if_no_artifact_found: fail
+
+      - name: Prepare release files
+        run: |
+          mkdir -p release
+          VERSION=${{ steps.version.outputs.version }}
+
+          echo "📦 Collecting artifacts..."
+
+          # Copy all artifacts
+          find artifacts/linux-packages -name "*.deb" -exec cp {} release/ \;
+          find artifacts/linux-packages -name "*.rpm" -exec cp {} release/ \;
+          find artifacts/linux-packages -name "*.AppImage" -exec cp {} release/ \;
+          find artifacts/snap -name "*.snap" -exec cp {} release/ \;
+          find artifacts/flatpak -name "*.flatpak" -exec cp {} release/ \;
+
+          # Generate checksums
+          cd release
+          sha256sum * > SHA256SUMS
+
+          echo "📦 Release artifacts:"
+          ls -lah
+          cd ..
+
+      - name: Create release notes
+        run: |
+          RELEASE_DATE=$(date -u +'%Y-%m-%d')
+          VERSION=${{ steps.version.outputs.version }}
+          
+          cat > RELEASE_NOTES.md << EOF
+          # Proton Drive Linux ${VERSION}
+
+          **Release Date:** ${RELEASE_DATE}
+
+          An unofficial Linux desktop client for Proton Drive, built with Tauri.
+
+          ## Downloads
+
+          | Format | File | Description |
+          |--------|------|-------------|
+          | DEB | \`proton-drive_*.deb\` | Debian, Ubuntu, Linux Mint |
+          | RPM | \`proton-drive-*.rpm\` | Fedora, RHEL, CentOS, openSUSE |
+          | AppImage | \`proton-drive_*.AppImage\` | Universal Linux (portable) |
+          | Snap | \`proton-drive_*.snap\` | Snap-enabled distributions |
+          | Flatpak | \`proton-drive.flatpak\` | Flatpak-enabled distributions |
+
+          ## Installation
+
+          ### Debian/Ubuntu
+          \`\`\`bash
+          sudo apt install ./proton-drive_*.deb
+          \`\`\`
+
+          ### Fedora/RHEL
+          \`\`\`bash
+          sudo dnf install ./proton-drive-*.rpm
+          \`\`\`
+
+          ### AppImage (Portable)
+          \`\`\`bash
+          chmod +x proton-drive_*.AppImage
+          ./proton-drive_*.AppImage
+          \`\`\`
+
+          ### Snap
+          \`\`\`bash
+          sudo snap install --dangerous proton-drive_*.snap
+          \`\`\`
+
+          ### Flatpak
+          \`\`\`bash
+          flatpak install --user proton-drive.flatpak
+          \`\`\`
+
+          ## Checksums
+
+          All files have SHA256 checksums available in \`SHA256SUMS\`.
+
+          ## System Requirements
+
+          - Linux x86_64
+          - GTK 3.0+ and WebKitGTK
+          - ~200MB disk space
+
+          ## Issues
+
+          Report issues at https://github.com/${{ github.repository }}/issues
+          EOF
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          body_path: RELEASE_NOTES.md
+          files: release/*
+          draft: false
+          prerelease: false
+          generate_release_notes: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
