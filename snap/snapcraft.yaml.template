@@ -11,7 +11,7 @@ base: core24
 platforms:
   amd64:
 title: Proton Drive Linux Desktop Client
-contact: https://github.com/Xanderful/proton-drive-linux/issues
+contact: https://github.com/Xanderful/proton-drive-for-linux/issues
 license: Apache-2.0
 
 apps:

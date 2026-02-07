@@ -102,8 +102,8 @@ sudo pacman -S base-devel cmake gtk4 curl sqlite openssl
 ### From Source
 
 ```bash
-git clone https://github.com/Xanderful/proton-drive-linux.git
-cd proton-drive-linux
+git clone https://github.com/Xanderful/proton-drive-for-linux.git
+cd proton-drive-for-linux
 
 # Build release binary
 mkdir -p src-native/build && cd src-native/build

@@ -4,14 +4,14 @@ pkgver=1.2.0
 pkgrel=1
 pkgdesc="Unofficial native Linux desktop client for Proton Drive (C++/GTK4)"
 arch=('x86_64')
-url="https://github.com/Xanderful/proton-drive-linux"
+url="https://github.com/Xanderful/proton-drive-for-linux"
 license=('Apache-2.0')
 depends=('gtk4' 'libcurl' 'sqlite' 'openssl' 'rclone')
 optdepends=('fuse3: for rclone mount-based sync')
 provides=('proton-drive')
 conflicts=('proton-drive')
 options=('!strip')
-source=("${pkgname}-${pkgver}.AppImage::https://github.com/Xanderful/proton-drive-linux/releases/download/v${pkgver}/proton-drive_${pkgver}_amd64.AppImage")
+source=("${pkgname}-${pkgver}.AppImage::https://github.com/Xanderful/proton-drive-for-linux/releases/download/v${pkgver}/proton-drive_${pkgver}_amd64.AppImage")
 sha256sums=('SKIP')
 
 prepare() {

@@ -1,10 +1,10 @@
 {
   "name": "proton-drive-linux",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Native C++/GTK4 desktop client for Proton Drive on Linux",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Xanderful/proton-drive-linux.git"
+    "url": "https://github.com/Xanderful/proton-drive-for-linux.git"
   },
   "keywords": [
     "proton",

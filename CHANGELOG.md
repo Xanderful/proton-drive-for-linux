@@ -21,6 +21,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Changed
 - Improved logging output and debug information
 
+## [1.2.1] - 2026-02-07
+
+### Fixed
+- AppImage script discovery now works correctly (APPDIR environment variable check)
+- Removed dead --skip-webclient flag from build script
+- Fixed step numbering in AppImage build process (1/5 through 5/5)
+- Desktop file now uses canonical version from packaging directory
+- Cleaned up unused environment variables in AppRun launcher
+
+### Added
+- Automated release creation script (create-release.sh)
+- GitHub Actions workflows for automated AppImage builds on releases
+
+### Changed
+- Updated repository name to proton-drive-for-linux across all documentation
+
 ## [1.2.0] - 2026-02-XX
 
 ### Added
