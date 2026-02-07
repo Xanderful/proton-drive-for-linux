@@ -89,10 +89,18 @@ std::string SyncManager::get_script_path(const std::string& script_name) {
             bin_dir / "scripts" / script_name, // If next to binary
             bin_dir / "../scripts" / script_name, // If binary in build/
             bin_dir / "../../scripts" / script_name, // If binary in src-native/build/
+            bin_dir / "../share/proton-drive/scripts" / script_name, // AppImage: usr/bin/../share/proton-drive/scripts/
             "/usr/share/proton-drive/scripts/" + script_name, // System install
             "scripts/" + script_name, // CWD
             "../scripts/" + script_name // Parent of CWD
         };
+        
+        // Also check APPDIR for AppImage environments
+        const char* appdir = std::getenv("APPDIR");
+        if (appdir) {
+            search_paths.insert(search_paths.begin(),
+                std::filesystem::path(appdir) / "usr/share/proton-drive/scripts" / script_name);
+        }
 
         for (const auto& path : search_paths) {
             if (AppWindowHelpers::safe_exists(path.string())) {

@@ -1,6 +1,6 @@
 #!/bin/bash
 # Local AppImage build script for Proton Drive Linux (Native C++/GTK)
-# Usage: ./scripts/build-local-appimage.sh [--skip-webclient] [--skip-native]
+# Usage: ./scripts/build-local-appimage.sh [--skip-native]
 #
 # Creates a portable AppImage that works across Linux distributions.
 # Requires: appimagetool, cmake, g++, and build dependencies
@@ -17,11 +17,9 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 cd "$PROJECT_ROOT"
 
 # Parse arguments
-SKIP_WEBCLIENT=false
 SKIP_NATIVE=false
 for arg in "$@"; do
     case "$arg" in
-        --skip-webclient) SKIP_WEBCLIENT=true ;;
         --skip-native) SKIP_NATIVE=true ;;
     esac
 done
@@ -69,7 +67,7 @@ fi
 
 # Step 1: Build native binary
 echo ""
-echo -e "${BLUE}[1/4] Building Native Binary...${NC}"
+echo -e "${BLUE}[1/5] Building Native Binary...${NC}"
 if [ "$SKIP_NATIVE" = false ]; then
     mkdir -p src-native/build
     cd src-native/build
@@ -86,7 +84,7 @@ fi
 
 # Step 2: Create AppDir structure
 echo ""
-echo -e "${BLUE}[2/4] Creating AppDir structure...${NC}"
+echo -e "${BLUE}[2/5] Creating AppDir structure...${NC}"
 rm -rf "$APPDIR"
 mkdir -p "$APPDIR/usr/bin"
 mkdir -p "$APPDIR/usr/lib"
@@ -119,31 +117,15 @@ if [ -f "scripts/manage-sync-job.sh" ]; then
     cp scripts/manage-sync-job.sh "$APPDIR/usr/share/proton-drive/scripts/"
 fi
 
-# Create .desktop file
-cat > "$APPDIR/usr/share/applications/proton-drive.desktop" << 'EOF'
-[Desktop Entry]
-Name=Proton Drive
-Comment=Encrypted cloud storage with two-way sync
-Exec=proton-drive
-Icon=proton-drive
-Terminal=false
-Type=Application
-Categories=Network;FileTransfer;Utility;
-Keywords=proton;drive;cloud;storage;encryption;sync;
-StartupNotify=true
-StartupWMClass=proton-drive
-X-AppImage-Version=@@VERSION@@
-EOF
-
-# Update version in desktop file
-sed -i "s/@@VERSION@@/$VERSION/" "$APPDIR/usr/share/applications/proton-drive.desktop"
+# Copy .desktop file from packaging
+cp src-native/packaging/proton-drive.desktop "$APPDIR/usr/share/applications/proton-drive.desktop"
 
 # Symlink desktop and icon to AppDir root (required by AppImage)
 ln -sf usr/share/applications/proton-drive.desktop "$APPDIR/proton-drive.desktop"
 
 # Step 3: Create AppRun
 echo ""
-echo -e "${BLUE}[3/4] Creating AppRun entry point...${NC}"
+echo -e "${BLUE}[3/5] Creating AppRun entry point...${NC}"
 cat > "$APPDIR/AppRun" << 'APPRUN_EOF'
 #!/bin/bash
 # AppRun for Proton Drive Linux
@@ -283,11 +265,7 @@ else
     export XDG_DATA_DIRS="${HERE}/usr/share:${XDG_DATA_DIRS}"
 fi
 
-# Tell the app where to find its resources
-export PROTON_DRIVE_RESOURCES="${HERE}/usr/share/proton-drive"
-export PROTON_DRIVE_SCRIPTS="${HERE}/usr/share/proton-drive/scripts"
-
-# Icon path for system tray (AppIndicator)
+# Icon path for system tray (AppIndicator) - read by tray_gtk4.cpp
 export PROTON_DRIVE_ICON_PATH="${HERE}/usr/share/icons/hicolor/scalable/apps"
 
 # Ensure data directory is in user's real home, not snap home
@@ -320,9 +298,9 @@ exec "${HERE}/usr/bin/proton-drive" "$@"
 APPRUN_EOF
 chmod +x "$APPDIR/AppRun"
 
-# Step 4.5: Bundle rclone binary
+# Step 4: Bundle rclone binary
 echo ""
-echo -e "${BLUE}[4.5/5] Bundling rclone with Proton Drive upload fix...${NC}"
+echo -e "${BLUE}[4/5] Bundling rclone with Proton Drive upload fix...${NC}"
 
 # Build rclone from coderFrankenstain's fork with PR #9081 fix
 # (Official release doesn't have the block verification fix yet)
@@ -363,9 +341,9 @@ fi
 cd "$PROJECT_ROOT"
 rm -rf "$RCLONE_TEMP"
 
-# Step 4: Bundle required libraries (optional, for maximum portability)
+# Step 5: Bundle required libraries (optional, for maximum portability)
 echo ""
-echo -e "${BLUE}[4/4] Bundling libraries for portability...${NC}"
+echo -e "${BLUE}[5/5] Bundling libraries for portability...${NC}"
 
 # Function to copy a library and its dependencies
 bundle_library() {
