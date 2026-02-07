@@ -72,23 +72,32 @@ void AppWindow::show_cloud_context_menu(const std::string& path, bool is_dir, do
             GtkWidget* pop = gtk_widget_get_ancestor(GTK_WIDGET(btn), GTK_TYPE_POPOVER);
             if (pop) gtk_popover_popdown(GTK_POPOVER(pop));
             
-            // Show folder chooser dialog to pick local destination
-            GtkFileDialog* dialog = gtk_file_dialog_new();
-            gtk_file_dialog_set_title(dialog, "Select Local Folder to Sync With");
+            // Show folder chooser dialog to pick local destination (GTK 4.6 compatible)
+            G_GNUC_BEGIN_IGNORE_DEPRECATIONS
+            GtkWidget* dialog = gtk_file_chooser_dialog_new(
+                "Select Local Folder to Sync With",
+                GTK_WINDOW(self->get_window()),
+                GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER,
+                "_Cancel", GTK_RESPONSE_CANCEL,
+                "_Select", GTK_RESPONSE_ACCEPT,
+                nullptr
+            );
+            G_GNUC_END_IGNORE_DEPRECATIONS
             
             // Store cloud path for callback
             char* cloud_path_copy = g_strdup(cloud_path.c_str());
             g_object_set_data_full(G_OBJECT(dialog), "cloud_path", cloud_path_copy, g_free);
             g_object_set_data(G_OBJECT(dialog), "app_window", self);
             
-            gtk_file_dialog_select_folder(dialog, GTK_WINDOW(self->get_window()), nullptr,
-                [](GObject* source, GAsyncResult* result, gpointer) {
-                    GtkFileDialog* dlg = GTK_FILE_DIALOG(source);
-                    const char* cloud_p = static_cast<const char*>(g_object_get_data(G_OBJECT(dlg), "cloud_path"));
-                    auto* app_win = static_cast<AppWindow*>(g_object_get_data(G_OBJECT(dlg), "app_window"));
-                    
-                    GFile* file = gtk_file_dialog_select_folder_finish(dlg, result, nullptr);
-                    if (file && cloud_p && app_win) {
+            g_signal_connect(dialog, "response", G_CALLBACK(+[](GtkDialog* dlg, gint response, gpointer) {
+                const char* cloud_p = static_cast<const char*>(g_object_get_data(G_OBJECT(dlg), "cloud_path"));
+                auto* app_win = static_cast<AppWindow*>(g_object_get_data(G_OBJECT(dlg), "app_window"));
+                
+                if (response == GTK_RESPONSE_ACCEPT && cloud_p && app_win) {
+                    G_GNUC_BEGIN_IGNORE_DEPRECATIONS
+                    GFile* file = gtk_file_chooser_get_file(GTK_FILE_CHOOSER(dlg));
+                    G_GNUC_END_IGNORE_DEPRECATIONS
+                    if (file) {
                         char* local_path = g_file_get_path(file);
                         if (local_path) {
                             app_win->append_log("[Sync] Syncing cloud: " + std::string(cloud_p) + " → local: " + std::string(local_path));                            app_win->show_toast("\U0001f504 Sync started: " + std::string(cloud_p));
@@ -100,9 +109,11 @@ void AppWindow::show_cloud_context_menu(const std::string& path, bool is_dir, do
                         }
                         g_object_unref(file);
                     }
-                }, nullptr);
+                }
+                gtk_window_destroy(GTK_WINDOW(dlg));
+            }), nullptr);
             
-            g_object_unref(dialog);
+            gtk_widget_show(dialog);
         }), this);
         gtk_box_append(GTK_BOX(menu_box), sync_btn);
         

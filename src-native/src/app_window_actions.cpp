@@ -338,16 +338,27 @@ void AppWindow::on_stop_clicked() {
 }
 
 void AppWindow::on_add_sync_clicked() {
-    // Open file chooser for folder selection
-    GtkFileDialog* dialog = gtk_file_dialog_new();
-    gtk_file_dialog_set_title(dialog, "Select Folder to Sync");
+    // Open file chooser for folder selection (GTK 4.6 compatible)
+    G_GNUC_BEGIN_IGNORE_DEPRECATIONS
+    GtkWidget* dialog = gtk_file_chooser_dialog_new(
+        "Select Folder to Sync",
+        GTK_WINDOW(window_),
+        GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER,
+        "_Cancel", GTK_RESPONSE_CANCEL,
+        "_Select", GTK_RESPONSE_ACCEPT,
+        nullptr
+    );
+    G_GNUC_END_IGNORE_DEPRECATIONS
     
-    gtk_file_dialog_select_folder(dialog, GTK_WINDOW(window_), nullptr, 
-        [](GObject* source, GAsyncResult* result, gpointer data) {
-            auto* self = static_cast<AppWindow*>(data);
-            GtkFileDialog* dlg = GTK_FILE_DIALOG(source);
-            
-            GFile* file = gtk_file_dialog_select_folder_finish(dlg, result, nullptr);
+    g_object_set_data(G_OBJECT(dialog), "app_window", this);
+    
+    g_signal_connect(dialog, "response", G_CALLBACK(+[](GtkDialog* dlg, gint response, gpointer) {
+        auto* self = static_cast<AppWindow*>(g_object_get_data(G_OBJECT(dlg), "app_window"));
+        
+        if (response == GTK_RESPONSE_ACCEPT && self) {
+            G_GNUC_BEGIN_IGNORE_DEPRECATIONS
+            GFile* file = gtk_file_chooser_get_file(GTK_FILE_CHOOSER(dlg));
+            G_GNUC_END_IGNORE_DEPRECATIONS
             if (file) {
                 char* path = g_file_get_path(file);
                 if (path) {
@@ -357,9 +368,11 @@ void AppWindow::on_add_sync_clicked() {
                 }
                 g_object_unref(file);
             }
-        }, this);
+        }
+        gtk_window_destroy(GTK_WINDOW(dlg));
+    }), nullptr);
     
-    g_object_unref(dialog);
+    gtk_widget_show(dialog);
 }
 
 static std::string normalize_remote_path(const std::string& input) {
