@@ -570,7 +570,7 @@ int main(int argc, char* argv[]) {
 #ifdef USE_GTK4
     gtk_init();
     Logger::debug("[Init] GTK4 initialized");
-    GtkApplication* app = gtk_application_new("me.proton.drive", G_APPLICATION_DEFAULT_FLAGS);
+    GtkApplication* app = gtk_application_new("me.proton.drive", G_APPLICATION_FLAGS_NONE);  // Compatible with GTK 4.6+
     global_app = app;  // Store for signal handler
     Logger::debug("[Init] GtkApplication created");
     

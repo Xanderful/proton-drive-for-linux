@@ -732,7 +732,7 @@ bool AppWindow::initialize() {
     
     // Apply CSS styling
     GtkCssProvider* css_provider = gtk_css_provider_new();
-    gtk_css_provider_load_from_string(css_provider, APP_CSS);
+    gtk_css_provider_load_from_data(css_provider, APP_CSS, -1);  // Compatible with GTK 4.6+
     gtk_style_context_add_provider_for_display(
         gdk_display_get_default(),
         GTK_STYLE_PROVIDER(css_provider),
