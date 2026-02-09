@@ -1,3 +1,23 @@
+ sed -i 's|github.com/Xanderful/proton-drive-linux|github.com/Xanderful/proton-drive-for-linux|g' docs/TROUBLESHOOTING.md docs/CONTRIBUTING.md docs/CROSS_DISTRO_TESTING.md
+ sed -i 's|cd proton-drive-linux|cd proton-drive-for-linux|g' docs/CONTRIBUTING.md docs/CROSS_DISTRO_TESTING.md
+ git status --short
+ git add -A && git status
+ git log --oneline -5
+ cd /home/joseph/GitHub/protondrive-linux && git add . && git commit -m "Update repository name to proton-drive-for-linux
+
+- Update all URLs from proton-drive-linux to proton-drive-for-linux
+- Update package.json repository field
+- Update documentation (README, CONTRIBUTING, etc.)
+- Update packaging files (AUR PKGBUILD, snap template)
+- Add release notes for v1.2.1"
+ exec zsh
+ git status
+ git --no-pager status --short
+ git --no-pager log --oneline -10
+ pkill -f vim; pkill -f nano; pkill -f less; sleep 1; cd /home/joseph/GitHub/protondrive-linux && ls -la .git/HEAD
+ git add -A 2>&1 && echo "Added files" && git commit -m "Update repository name to proton-drive-for-linux - v1.2.1 release" 2>&1 | head -20
+ git add CHANGELOG.md package.json aur/PKGBUILD snap/snapcraft.yaml.template README.md docs/TROUBLESHOOTING.md docs/CONTRIBUTING.md docs/CROSS_DISTRO_TESTING.md
+ export GIT_PAGER=cat PAGER=cat && cd /home/joseph/GitHub/protondrive-linux && git --no-pager add -A && git --no-pager commit -m "Update repository name to proton-drive-for-linux for v1.2.1 release" && git --no-pager tag -a v1.2.1 -m "Release v1.2.1" && echo "Release v1.2.1 created successfully"
 # Keep a Changelog
 
 All notable changes to this project are documented here.
@@ -7,43 +27,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [1.3.0] - 2026-02-09
-
 ### Added
-- **Profile Management**: Edit existing rclone profiles to update credentials and add/modify 2FA codes
-- **Test Connection**: New button to verify Proton Drive connectivity before syncing
-- **Proton Sentinel Warnings**: Clear documentation about Proton Sentinel blocking sync and how to resolve it
-- **Incremental Indexing**: Smart cloud file indexing that only scans changed folders instead of entire cloud tree (10x faster)
-- **Optimized Cloud Monitoring**: Batch downloads for large file sets instead of individual transfers
-- **Size-based Change Detection**: Cloud monitor now detects modified files by checking size + mod_time, not just existence
+- Real-time file watcher for immediate local-to-cloud sync detection
+- Enhanced cloud browser UI with thumbnail support
+- Bandwidth monitoring dashboard
+- Device identity tracking for multi-device sync
 
 ### Fixed
-- **Deleted Sync Jobs Reappearing**: Fixed issue where deleted sync jobs would return on app restart
-- **Large File Indexing**: Full index rebuild no longer takes hours for large cloud folders
-- **Sync Job Persistence**: Properly clean up .conf files when sync jobs are deleted
-- **Cloud Monitoring Performance**: Reduced API calls and network overhead for large sync folders
-- **Duplicate Variable Declaration**: Fixed build error in file_index.cpp
+- Sync conflict resolution improvements
+- Delete protection edge case handling
+- Stale lock file cleanup
 
 ### Changed
-- Split indexing into `index_worker_full()` and `index_worker_incremental()` for better control
-- Cloud monitoring uses `rclone lsjson --max-depth 1` for initial scan (single API call)
-- Profile edit dialog provides clearer feedback on 2FA configuration
-
-## [1.2.1] - 2026-02-07
-
-### Fixed
-- AppImage script discovery now works correctly (APPDIR environment variable check)
-- Removed dead --skip-webclient flag from build script
-- Fixed step numbering in AppImage build process (1/5 through 5/5)
-- Desktop file now uses canonical version from packaging directory
-- Cleaned up unused environment variables in AppRun launcher
-
-### Added
-- Automated release creation script (create-release.sh)
-- GitHub Actions workflows for automated AppImage builds on releases
-
-### Changed
-- Updated repository name to proton-drive-for-linux across all documentation
+- Improved logging output and debug information
 
 ## [1.2.0] - 2026-02-XX
 

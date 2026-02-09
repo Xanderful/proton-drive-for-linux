@@ -4,6 +4,32 @@
 
 This project uses rclone for syncing files between your local folders and Proton Drive. Due to known issues with the current rclone release, you may need to install a patched version.
 
+## ⚠️ Proton Sentinel Warning
+
+**Important:** If you have **Proton Sentinel** enabled on your Proton account, it may block this application from syncing.
+
+**Symptoms:**
+- Login and authentication work correctly
+- Cloud browser may load files
+- Sync operations fail, timeout, or get blocked
+- API requests return authentication errors after initial login
+
+**Solutions:**
+
+1. **Disable Proton Sentinel** (easiest):
+   - Log into [account.proton.me](https://account.proton.me)
+   - Go to **Security** settings
+   - Turn off **Proton Sentinel**
+   - Wait a few minutes for the change to propagate
+
+2. **Keep Sentinel enabled** (requires support ticket):
+   - Contact Proton Support at [proton.me/support](https://proton.me/support)
+   - Request whitelisting for third-party rclone/API access
+   - Mention you're using an unofficial Linux client with rclone backend
+   - Wait for support to add your account to the whitelist
+
+**Why?** Proton Sentinel is a security feature that monitors for suspicious account activity. Third-party API access (like rclone) can trigger false positives.
+
 ## Known Issues
 
 ### rclone Proton Drive Upload Bug (Issue #8870)

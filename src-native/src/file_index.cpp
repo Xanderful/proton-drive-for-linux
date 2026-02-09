@@ -1,6 +1,7 @@
 #include "file_index.hpp"
 #include "logger.hpp"
 #include "crypto.hpp"
+#include "sync_job_metadata.hpp"
 #include <sqlite3.h>
 #include <sstream>
 #include <fstream>
@@ -14,6 +15,7 @@
 #include <iomanip>
 #include <unistd.h>
 #include <limits.h>
+#include <set>
 #include <openssl/rand.h>
 
 namespace fs = std::filesystem;
@@ -809,10 +811,209 @@ void FileIndex::index_worker(bool full_reindex) {
         // Clear existing data
         report_progress(5, "Clearing old index...");
         sqlite3_exec(db, "DELETE FROM files;", nullptr, nullptr, nullptr);
+        
+        // Full recursive scan
+        index_worker_full(db);
+    } else {
+        // Incremental: only scan synced folders + top-level structure
+        index_worker_incremental(db);
+    }
+}
+
+void FileIndex::index_worker_incremental(void* db_handle) {
+    sqlite3* db = static_cast<sqlite3*>(db_handle);
+    auto start_time = std::chrono::steady_clock::now();
+    
+    report_progress(5, "Scanning top-level folders...");
+    Logger::info("[FileIndex] Starting INCREMENTAL index (synced folders + top-level)");
+    
+    // Ensure valid working directory before popen()
+    ensure_valid_cwd();
+    
+    std::string rclone = get_rclone_path();
+    
+    // ========================================================================
+    // Phase 1: Quick top-level scan (depth 1 only — single API call)
+    // ========================================================================
+    std::string cmd = "timeout 30 " + rclone + " lsjson --max-depth 1 \"" + remote_name_ + ":/\" 2>/dev/null";
+    
+    std::array<char, 8192> buffer;
+    std::string top_json;
+    {
+        std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(cmd.c_str(), "r"), pclose);
+        if (!pipe) {
+            Logger::error("[FileIndex] Failed to run rclone for incremental index");
+            report_progress(100, "Error: rclone failed");
+            is_indexing_ = false;
+            return;
+        }
+        while (fgets(buffer.data(), buffer.size(), pipe.get()) != nullptr) {
+            if (stop_requested_) { is_indexing_ = false; return; }
+            top_json += buffer.data();
+        }
     }
     
+    if (top_json.empty() || top_json.find('[') == std::string::npos) {
+        Logger::warn("[FileIndex] Incremental: no valid JSON from top-level scan");
+        report_progress(100, "Error: No data from cloud");
+        is_indexing_ = false;
+        return;
+    }
+    
+    // Parse top-level items and upsert them
+    auto top_items = parse_lsjson_output(top_json, remote_name_ + ":/");
+    int total_updated = 0;
+    
+    if (!top_items.empty()) {
+        insert_files_batch(top_items);
+        total_updated += top_items.size();
+        Logger::info("[FileIndex] Incremental: updated " + std::to_string(top_items.size()) + " top-level items");
+    }
+    
+    report_progress(15, "Top-level scanned (" + std::to_string(top_items.size()) + " items)");
+    
+    // ========================================================================
+    // Phase 2: Scan synced folders recursively (these are what the user cares about)
+    // ========================================================================
+    // Get active sync job remote paths from SyncJobRegistry
+    std::vector<std::string> synced_folders;
+    {
+        // Query for folders that are marked as synced in the index
+        sqlite3_stmt* stmt;
+        const char* sql = "SELECT DISTINCT parent_path FROM files WHERE is_synced = 1";
+        if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) == SQLITE_OK) {
+            while (sqlite3_step(stmt) == SQLITE_ROW) {
+                const char* path = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+                if (path && strlen(path) > 0) {
+                    synced_folders.push_back(path);
+                }
+            }
+            sqlite3_finalize(stmt);
+        }
+    }
+    
+    // Also check for top-level directories that have changed mod_time
+    // Compare each top-level folder's mod_time against what's in the DB
+    std::vector<std::string> changed_folders;
+    for (const auto& item : top_items) {
+        if (!item.is_directory) continue;
+        if (stop_requested_) { is_indexing_ = false; return; }
+        
+        // Check stored mod_time for this folder
+        sqlite3_stmt* stmt;
+        const char* sql = "SELECT mod_time FROM files WHERE path = ?";
+        if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) == SQLITE_OK) {
+            sqlite3_bind_text(stmt, 1, item.path.c_str(), -1, SQLITE_TRANSIENT);
+            if (sqlite3_step(stmt) == SQLITE_ROW) {
+                const char* stored_mod = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+                std::string stored = stored_mod ? stored_mod : "";
+                if (stored != item.mod_time) {
+                    // Mod time changed — folder contents may have changed
+                    changed_folders.push_back(item.path);
+                    Logger::info("[FileIndex] Incremental: folder changed: " + item.path + 
+                               " (stored=" + stored + " vs cloud=" + item.mod_time + ")");
+                }
+            } else {
+                // New folder not in index yet
+                changed_folders.push_back(item.path);
+                Logger::info("[FileIndex] Incremental: new folder: " + item.path);
+            }
+            sqlite3_finalize(stmt);
+        }
+    }
+    
+    // Merge synced_folders and changed_folders into a unique set to scan
+    std::set<std::string> folders_to_scan;
+    for (const auto& f : synced_folders) folders_to_scan.insert(f);
+    for (const auto& f : changed_folders) folders_to_scan.insert(f);
+    
+    int total_folders = folders_to_scan.size();
+    int folder_idx = 0;
+    
+    Logger::info("[FileIndex] Incremental: " + std::to_string(total_folders) + 
+                " folders to scan (" + std::to_string(synced_folders.size()) + " synced, " +
+                std::to_string(changed_folders.size()) + " changed)");
+    
+    for (const auto& folder_path : folders_to_scan) {
+        if (stop_requested_) {
+            Logger::info("[FileIndex] Incremental: cancelled");
+            is_indexing_ = false;
+            return;
+        }
+        
+        folder_idx++;
+        int progress = 15 + (folder_idx * 80 / std::max(total_folders, 1));
+        report_progress(progress, "Scanning folder " + std::to_string(folder_idx) + "/" + 
+                       std::to_string(total_folders) + "...");
+        
+        // Extract the cloud path from the full path (remove "proton:" prefix)
+        std::string cloud_path = folder_path;
+        size_t colon = cloud_path.find(':');
+        if (colon != std::string::npos) {
+            cloud_path = cloud_path.substr(colon + 1);
+        }
+        if (cloud_path.empty()) cloud_path = "/";
+        
+        // Shell-escape the path
+        std::string safe_remote = remote_name_ + ":" + cloud_path;
+        std::string escaped = "'";
+        for (char c : safe_remote) {
+            if (c == '\'') escaped += "'\"'\"'";
+            else escaped += c;
+        }
+        escaped += "'";
+        
+        // Scan this folder recursively (but with a timeout to prevent hangs)
+        std::string scan_cmd = "timeout 60 " + rclone + " lsjson --recursive --fast-list " + escaped + " 2>/dev/null";
+        
+        std::string folder_json;
+        {
+            std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(scan_cmd.c_str(), "r"), pclose);
+            if (!pipe) {
+                Logger::warn("[FileIndex] Incremental: failed to scan " + folder_path);
+                continue;
+            }
+            while (fgets(buffer.data(), buffer.size(), pipe.get()) != nullptr) {
+                if (stop_requested_) { is_indexing_ = false; return; }
+                folder_json += buffer.data();
+            }
+        }
+        
+        if (folder_json.empty() || folder_json.find('[') == std::string::npos) {
+            Logger::debug("[FileIndex] Incremental: empty or invalid output for " + folder_path);
+            continue;
+        }
+        
+        auto items = parse_lsjson_output(folder_json, folder_path + "/");
+        if (!items.empty()) {
+            insert_files_batch(items);
+            total_updated += items.size();
+            Logger::info("[FileIndex] Incremental: updated " + std::to_string(items.size()) + 
+                        " items in " + folder_path);
+        }
+    }
+    
+    auto total_elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::steady_clock::now() - start_time).count();
+    
+    update_last_index_time();
+    report_progress(100, "Updated " + std::to_string(total_updated) + " items (" + 
+                   std::to_string(total_elapsed) + "s)");
+    
+    Logger::info("[FileIndex] Incremental index complete: " + std::to_string(total_updated) + 
+                " items in " + std::to_string(total_elapsed) + "s " +
+                "(scanned " + std::to_string(total_folders) + " folders)");
+    
+    is_indexing_ = false;
+}
+
+void FileIndex::index_worker_full(void* db_handle) {
+    (void)db_handle;  // Full indexer uses class members directly
+    
     report_progress(10, "Streaming file list from cloud...");
-    Logger::info("[FileIndex] Starting rclone lsjson with streaming save (every 500 files)");
+    Logger::info("[FileIndex] Starting FULL rclone lsjson with streaming save (every 500 files)");
+    
+    auto start_time = std::chrono::steady_clock::now();
     
     // Ensure valid working directory before popen()
     ensure_valid_cwd();
@@ -839,7 +1040,6 @@ void FileIndex::index_worker(bool full_reindex) {
     bool escape_next = false;
     std::string current_object;
     current_object.reserve(2048);  // Reserve reasonable size for one JSON object
-    auto start_time = std::chrono::steady_clock::now();
     
     const size_t BATCH_SIZE = 500;  // Save every 500 files
     
@@ -1029,6 +1229,135 @@ void FileIndex::index_worker(bool full_reindex) {
     Logger::info("[FileIndex] Indexed " + std::to_string(total_saved) + " files/folders");
     
     is_indexing_ = false;
+}
+
+// ============================================================================
+// parse_lsjson_output - Parse rclone lsjson JSON into IndexedFile vector
+// base_path: the parent path prefix (e.g. "proton:/" or "proton:/Documents/")
+// ============================================================================
+std::vector<IndexedFile> FileIndex::parse_lsjson_output(const std::string& json, const std::string& base_path) {
+    std::vector<IndexedFile> items;
+    if (json.empty() || json.find('[') == std::string::npos) return items;
+    
+    // Fast manual JSON value extractors
+    auto extract_str = [](const std::string& obj, const char* key, std::string& out) -> bool {
+        std::string needle = std::string("\"" ) + key + "\":";
+        size_t pos = obj.find(needle);
+        if (pos == std::string::npos) return false;
+        pos += needle.size();
+        while (pos < obj.size() && (obj[pos] == ' ' || obj[pos] == '\t')) pos++;
+        if (pos >= obj.size() || obj[pos] != '"') return false;
+        pos++;
+        std::string result;
+        result.reserve(128);
+        while (pos < obj.size() && obj[pos] != '"') {
+            if (obj[pos] == '\\' && pos + 1 < obj.size()) {
+                pos++;
+                switch (obj[pos]) {
+                    case '"': result += '"'; break;
+                    case '\\': result += '\\'; break;
+                    case '/': result += '/'; break;
+                    case 'n': result += '\n'; break;
+                    case 't': result += '\t'; break;
+                    default: result += obj[pos]; break;
+                }
+            } else {
+                result += obj[pos];
+            }
+            pos++;
+        }
+        out = std::move(result);
+        return true;
+    };
+    
+    auto extract_i64 = [](const std::string& obj, const char* key, int64_t& out) -> bool {
+        std::string needle = std::string("\"" ) + key + "\":";
+        size_t pos = obj.find(needle);
+        if (pos == std::string::npos) return false;
+        pos += needle.size();
+        while (pos < obj.size() && (obj[pos] == ' ' || obj[pos] == '\t')) pos++;
+        size_t end = pos;
+        if (end < obj.size() && obj[end] == '-') end++;
+        while (end < obj.size() && std::isdigit(static_cast<unsigned char>(obj[end]))) end++;
+        if (end == pos) return false;
+        try { out = std::stoll(obj.substr(pos, end - pos)); return true; }
+        catch (...) { return false; }
+    };
+    
+    auto extract_b = [](const std::string& obj, const char* key) -> bool {
+        std::string needle = std::string("\"" ) + key + "\":";
+        size_t pos = obj.find(needle);
+        if (pos == std::string::npos) return false;
+        pos += needle.size();
+        while (pos < obj.size() && (obj[pos] == ' ' || obj[pos] == '\t')) pos++;
+        return (pos + 3 < obj.size() && obj.substr(pos, 4) == "true");
+    };
+    
+    // Parse JSON objects using brace-depth tracking
+    int brace_depth = 0;
+    bool in_string = false;
+    bool escape_next = false;
+    std::string current_object;
+    current_object.reserve(2048);
+    
+    for (size_t i = 0; i < json.size(); i++) {
+        char c = json[i];
+        
+        if (escape_next) { escape_next = false; if (brace_depth > 0) current_object += c; continue; }
+        if (c == '\\' && in_string) { escape_next = true; if (brace_depth > 0) current_object += c; continue; }
+        if (c == '"' && !escape_next) in_string = !in_string;
+        
+        if (!in_string) {
+            if (c == '{') {
+                if (brace_depth == 0) current_object.clear();
+                brace_depth++;
+            } else if (c == '}') {
+                brace_depth--;
+                if (brace_depth == 0) {
+                    current_object += c;
+                    
+                    IndexedFile file;
+                    std::string path_value;
+                    
+                    extract_str(current_object, "Name", file.name);
+                    if (extract_str(current_object, "Path", path_value)) {
+                        // base_path already includes trailing separator
+                        file.path = base_path + path_value;
+                    } else {
+                        file.path = base_path + file.name;
+                    }
+                    extract_i64(current_object, "Size", file.size);
+                    std::string mod_value;
+                    if (extract_str(current_object, "ModTime", mod_value)) {
+                        file.mod_time = mod_value.substr(0, 19);
+                    }
+                    file.is_directory = extract_b(current_object, "IsDir");
+                    
+                    // Calculate parent path
+                    size_t last_slash = file.path.rfind('/');
+                    if (last_slash != std::string::npos && last_slash > file.path.find(':') + 1) {
+                        file.parent_path = file.path.substr(0, last_slash);
+                    } else {
+                        file.parent_path = remote_name_ + ":/";
+                    }
+                    
+                    file.extension = get_extension(file.name);
+                    file.is_synced = false;
+                    
+                    if (!file.name.empty() && !file.path.empty()) {
+                        items.push_back(std::move(file));
+                    }
+                    
+                    current_object.clear();
+                    continue;
+                }
+            }
+        }
+        
+        if (brace_depth > 0) current_object += c;
+    }
+    
+    return items;
 }
 
 bool FileIndex::insert_files_batch(const std::vector<IndexedFile>& files) {

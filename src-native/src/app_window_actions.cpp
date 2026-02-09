@@ -1020,6 +1020,308 @@ void AppWindow::on_add_profile_clicked() {
     gtk_window_present(GTK_WINDOW(dialog));
 }
 
+void AppWindow::on_edit_profile_clicked(const std::string& profile_name) {
+    append_log("[Profile] Opening edit dialog for: " + profile_name);
+    
+    // Create edit profile dialog
+    GtkWidget* dialog = gtk_window_new();
+    gtk_window_set_title(GTK_WINDOW(dialog), ("Edit Profile: " + profile_name).c_str());
+    gtk_window_set_transient_for(GTK_WINDOW(dialog), GTK_WINDOW(window_));
+    gtk_window_set_modal(GTK_WINDOW(dialog), TRUE);
+    gtk_window_set_default_size(GTK_WINDOW(dialog), 500, 450);
+    
+    GtkWidget* box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+    gtk_widget_set_margin_start(box, 20);
+    gtk_widget_set_margin_end(box, 20);
+    gtk_widget_set_margin_top(box, 20);
+    gtk_widget_set_margin_bottom(box, 20);
+    gtk_window_set_child(GTK_WINDOW(dialog), box);
+    
+    // Title
+    GtkWidget* title = gtk_label_new("Update Proton Drive Credentials");
+    gtk_widget_add_css_class(title, "title-2");
+    gtk_box_append(GTK_BOX(box), title);
+    
+    // Instructions
+    GtkWidget* instructions = gtk_label_new(
+        "Update your credentials or add 2FA configuration. This will recreate the profile with new settings."
+    );
+    gtk_label_set_wrap(GTK_LABEL(instructions), TRUE);
+    gtk_label_set_xalign(GTK_LABEL(instructions), 0);
+    gtk_box_append(GTK_BOX(box), instructions);
+    
+    // Username field
+    GtkWidget* username_label = gtk_label_new("Username (email):");
+    gtk_label_set_xalign(GTK_LABEL(username_label), 0);
+    gtk_box_append(GTK_BOX(box), username_label);
+    
+    GtkWidget* username_entry = gtk_entry_new();
+    gtk_entry_set_placeholder_text(GTK_ENTRY(username_entry), "your.email@protonmail.com");
+    gtk_box_append(GTK_BOX(box), username_entry);
+    
+    // Password field
+    GtkWidget* password_label = gtk_label_new("Password:");
+    gtk_label_set_xalign(GTK_LABEL(password_label), 0);
+    gtk_box_append(GTK_BOX(box), password_label);
+    
+    GtkWidget* password_entry = gtk_entry_new();
+    gtk_entry_set_visibility(GTK_ENTRY(password_entry), FALSE);
+    gtk_entry_set_placeholder_text(GTK_ENTRY(password_entry), "Enter password");
+    gtk_box_append(GTK_BOX(box), password_entry);
+    
+    // 2FA code field
+    GtkWidget* twofa_label = gtk_label_new("2FA Code (if enabled):");
+    gtk_label_set_xalign(GTK_LABEL(twofa_label), 0);
+    gtk_box_append(GTK_BOX(box), twofa_label);
+    
+    GtkWidget* twofa_entry = gtk_entry_new();
+    gtk_entry_set_placeholder_text(GTK_ENTRY(twofa_entry), "Enter 6-digit code if you have 2FA enabled");
+    gtk_box_append(GTK_BOX(box), twofa_entry);
+    
+    // Info note
+    GtkWidget* note = gtk_label_new("Note: This will delete and recreate the profile. Active sync jobs will need to reconnect.");
+    gtk_label_set_wrap(GTK_LABEL(note), TRUE);
+    gtk_label_set_xalign(GTK_LABEL(note), 0);
+    gtk_widget_add_css_class(note, "dim-label");
+    gtk_box_append(GTK_BOX(box), note);
+    
+    // Spacer
+    GtkWidget* spacer = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_widget_set_vexpand(spacer, TRUE);
+    gtk_box_append(GTK_BOX(box), spacer);
+    
+    // Status label
+    GtkWidget* status_label = gtk_label_new("");
+    gtk_label_set_wrap(GTK_LABEL(status_label), TRUE);
+    gtk_widget_add_css_class(status_label, "error");
+    gtk_box_append(GTK_BOX(box), status_label);
+    gtk_widget_set_visible(status_label, FALSE);
+    
+    // Button box
+    GtkWidget* button_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    gtk_widget_set_halign(button_box, GTK_ALIGN_END);
+    
+    GtkWidget* cancel_btn = gtk_button_new_with_label("Cancel");
+    g_signal_connect(cancel_btn, "clicked", G_CALLBACK(+[](GtkButton*, gpointer data) {
+        gtk_window_destroy(GTK_WINDOW(data));
+    }), dialog);
+    gtk_box_append(GTK_BOX(button_box), cancel_btn);
+    
+    GtkWidget* save_btn = gtk_button_new_with_label("Update Profile");
+    gtk_widget_add_css_class(save_btn, "suggested-action");
+    
+    struct EditDialogData {
+        AppWindow* window;
+        GtkWidget* dialog;
+        GtkWidget* username_entry;
+        GtkWidget* password_entry;
+        GtkWidget* twofa_entry;
+        GtkWidget* status_label;
+        std::string profile_name;
+    };
+    
+    EditDialogData* data = new EditDialogData{
+        this, dialog, username_entry, password_entry, twofa_entry, status_label, profile_name
+    };
+    
+    g_signal_connect(save_btn, "clicked", G_CALLBACK(+[](GtkButton*, gpointer user_data) {
+        EditDialogData* data = static_cast<EditDialogData*>(user_data);
+        
+        const char* username = gtk_editable_get_text(GTK_EDITABLE(data->username_entry));
+        const char* password = gtk_editable_get_text(GTK_EDITABLE(data->password_entry));
+        const char* twofa = gtk_editable_get_text(GTK_EDITABLE(data->twofa_entry));
+        
+        if (!username || strlen(username) == 0) {
+            gtk_label_set_text(GTK_LABEL(data->status_label), "Please enter your username");
+            gtk_widget_set_visible(data->status_label, TRUE);
+            return;
+        }
+        
+        if (!password || strlen(password) == 0) {
+            gtk_label_set_text(GTK_LABEL(data->status_label), "Please enter your password");
+            gtk_widget_set_visible(data->status_label, TRUE);
+            return;
+        }
+        
+        data->window->append_log("[Profile] Updating profile: " + data->profile_name);
+        
+        // Delete old profile
+        run_rclone("config delete " + data->profile_name);
+        
+        // Create new profile with same name
+        std::string output;
+        std::string error_message;
+        bool ok = run_rclone_config_create(
+            username,
+            password,
+            (twofa && strlen(twofa) > 0) ? std::string(twofa) : std::string(),
+            &output,
+            &error_message
+        );
+        
+        if (!ok) {
+            std::string msg = !error_message.empty() ? error_message : output;
+            if (msg.empty()) msg = "Unknown error";
+            gtk_label_set_text(GTK_LABEL(data->status_label),
+                ("Update failed: " + msg.substr(0, 200)).c_str());
+            gtk_widget_set_visible(data->status_label, TRUE);
+            data->window->append_log("[Profile] Update failed: " + msg);
+            return;
+        }
+        
+        data->window->append_log("[Profile] Profile updated successfully");
+        data->window->refresh_profiles();
+        data->window->refresh_cloud_files();
+        gtk_window_destroy(GTK_WINDOW(data->dialog));
+        delete data;
+    }), data);
+    
+    g_signal_connect(dialog, "close-request", G_CALLBACK(+[](GtkWindow*, gpointer user_data) -> gboolean {
+        delete static_cast<EditDialogData*>(user_data);
+        return FALSE;
+    }), data);
+    
+    gtk_box_append(GTK_BOX(button_box), save_btn);
+    gtk_box_append(GTK_BOX(box), button_box);
+    
+    gtk_window_present(GTK_WINDOW(dialog));
+}
+
+void AppWindow::on_test_connection_clicked() {
+    append_log("[Connection] Testing Proton Drive connection...");
+    
+    // Check if profile exists
+    if (!has_rclone_profile()) {
+        GtkWidget* error_dialog = gtk_window_new();
+        gtk_window_set_title(GTK_WINDOW(error_dialog), "No Profile");
+        gtk_window_set_transient_for(GTK_WINDOW(error_dialog), GTK_WINDOW(window_));
+        gtk_window_set_modal(GTK_WINDOW(error_dialog), TRUE);
+        gtk_window_set_default_size(GTK_WINDOW(error_dialog), 350, 150);
+        
+        GtkWidget* box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+        gtk_widget_set_margin_start(box, 20);
+        gtk_widget_set_margin_end(box, 20);
+        gtk_widget_set_margin_top(box, 20);
+        gtk_widget_set_margin_bottom(box, 20);
+        gtk_window_set_child(GTK_WINDOW(error_dialog), box);
+        
+        GtkWidget* label = gtk_label_new("No Proton profile configured.\nPlease add a profile first.");
+        gtk_label_set_wrap(GTK_LABEL(label), TRUE);
+        gtk_box_append(GTK_BOX(box), label);
+        
+        GtkWidget* ok_btn = gtk_button_new_with_label("OK");
+        gtk_widget_add_css_class(ok_btn, "suggested-action");
+        g_signal_connect_swapped(ok_btn, "clicked", G_CALLBACK(gtk_window_destroy), error_dialog);
+        gtk_box_append(GTK_BOX(box), ok_btn);
+        
+        gtk_window_present(GTK_WINDOW(error_dialog));
+        return;
+    }
+    
+    // Create progress dialog
+    GtkWidget* progress_dialog = gtk_window_new();
+    gtk_window_set_title(GTK_WINDOW(progress_dialog), "Testing Connection");
+    gtk_window_set_transient_for(GTK_WINDOW(progress_dialog), GTK_WINDOW(window_));
+    gtk_window_set_modal(GTK_WINDOW(progress_dialog), TRUE);
+    gtk_window_set_default_size(GTK_WINDOW(progress_dialog), 400, 200);
+    
+    GtkWidget* box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+    gtk_widget_set_margin_start(box, 20);
+    gtk_widget_set_margin_end(box, 20);
+    gtk_widget_set_margin_top(box, 20);
+    gtk_widget_set_margin_bottom(box, 20);
+    gtk_window_set_child(GTK_WINDOW(progress_dialog), box);
+    
+    GtkWidget* status_label = gtk_label_new("Connecting to Proton Drive...");
+    gtk_label_set_wrap(GTK_LABEL(status_label), TRUE);
+    gtk_box_append(GTK_BOX(box), status_label);
+    
+    GtkWidget* spinner = gtk_spinner_new();
+    gtk_spinner_start(GTK_SPINNER(spinner));
+    gtk_box_append(GTK_BOX(box), spinner);
+    
+    gtk_window_present(GTK_WINDOW(progress_dialog));
+    
+    // Run test in thread
+    struct TestData {
+        AppWindow* window;
+        GtkWidget* dialog;
+        GtkWidget* status_label;
+        GtkWidget* spinner;
+    };
+    
+    TestData* test_data = new TestData{this, progress_dialog, status_label, spinner};
+    
+    std::thread([test_data]() {
+        try {
+            // Test connection with a simple lsjson command
+            std::string rclone_path = get_rclone_path();
+            std::string cmd = "timeout 30 " + rclone_path + " lsjson proton:/ --max-depth 1 2>&1";
+            
+            FILE* pipe = popen(cmd.c_str(), "r");
+            bool success = false;
+            std::string output;
+            
+            if (pipe) {
+                char buffer[256];
+                while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+                    output += buffer;
+                }
+                int ret = pclose(pipe);
+                success = (ret == 0 && output.find('[') != std::string::npos);
+            }
+            
+            // Update UI in main thread
+            struct ResultData {
+                GtkWidget* dialog;
+                GtkWidget* status_label;
+                GtkWidget* spinner;
+                bool success;
+                std::string message;
+            };
+            
+            ResultData* result = new ResultData{
+                test_data->dialog,
+                test_data->status_label,
+                test_data->spinner,
+                success,
+                success ? "Connection successful!" : "Connection failed: " + (output.empty() ? "No response" : output.substr(0, 200))
+            };
+            
+            g_idle_add(+[](gpointer user_data) -> gboolean {
+                ResultData* r = static_cast<ResultData*>(user_data);
+                
+                gtk_spinner_stop(GTK_SPINNER(r->spinner));
+                gtk_widget_set_visible(r->spinner, FALSE);
+                
+                gtk_label_set_text(GTK_LABEL(r->status_label), r->message.c_str());
+                
+                if (r->success) {
+                    gtk_widget_add_css_class(r->status_label, "success");
+                } else {
+                    gtk_widget_add_css_class(r->status_label, "error");
+                }
+                
+                // Add close button
+                GtkWidget* box = gtk_widget_get_parent(r->status_label);
+                GtkWidget* close_btn = gtk_button_new_with_label("Close");
+                gtk_widget_add_css_class(close_btn, r->success ? "suggested-action" : "destructive-action");
+                g_signal_connect_swapped(close_btn, "clicked", G_CALLBACK(gtk_window_destroy), r->dialog);
+                gtk_box_append(GTK_BOX(box), close_btn);
+                
+                delete r;
+                return G_SOURCE_REMOVE;
+            }, result);
+            
+            test_data->window->append_log(success ? "[Connection] Test successful" : "[Connection] Test failed");
+            delete test_data;
+        } catch (const std::exception& e) {
+            Logger::error("[Connection] Test exception: " + std::string(e.what()));
+            delete test_data;
+        }
+    }).detach();
+}
+
 void AppWindow::on_settings_clicked() {
     append_log("[Settings] Opening settings...");
     

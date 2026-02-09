@@ -163,6 +163,9 @@ private:
     
     // Indexing worker
     void index_worker(bool full_reindex);
+    void index_worker_full(void* db_handle);
+    void index_worker_incremental(void* db_handle);
+    std::vector<IndexedFile> parse_lsjson_output(const std::string& json, const std::string& base_path);
     std::vector<IndexedFile> fetch_remote_listing(const std::string& path, bool recursive);
     
     // Helper to get extension from filename

@@ -308,6 +308,91 @@ void AppWindow::build_file_browser() {
     }), this);
     gtk_box_append(GTK_BOX(cloud_path_box), cloud_refresh_btn);
     
+    // New folder button
+    GtkWidget* new_folder_btn = gtk_button_new_from_icon_name("folder-new-symbolic");
+    gtk_widget_set_tooltip_text(new_folder_btn, "Create new folder");
+    g_signal_connect(new_folder_btn, "clicked", G_CALLBACK(+[](GtkButton*, gpointer data) {
+        auto* self = static_cast<AppWindow*>(data);
+        
+        // Create dialog to prompt for folder name
+        GtkWidget* dialog = gtk_window_new();
+        gtk_window_set_title(GTK_WINDOW(dialog), "Create New Folder");
+        gtk_window_set_transient_for(GTK_WINDOW(dialog), GTK_WINDOW(self->get_window()));
+        gtk_window_set_modal(GTK_WINDOW(dialog), TRUE);
+        gtk_window_set_default_size(GTK_WINDOW(dialog), 400, -1);
+        
+        GtkWidget* vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+        gtk_widget_set_margin_start(vbox, 20);
+        gtk_widget_set_margin_end(vbox, 20);
+        gtk_widget_set_margin_top(vbox, 20);
+        gtk_widget_set_margin_bottom(vbox, 20);
+        gtk_window_set_child(GTK_WINDOW(dialog), vbox);
+        
+        GtkWidget* label = gtk_label_new("Enter folder name:");
+        gtk_label_set_xalign(GTK_LABEL(label), 0);
+        gtk_box_append(GTK_BOX(vbox), label);
+        
+        GtkWidget* entry = gtk_entry_new();
+        gtk_entry_set_placeholder_text(GTK_ENTRY(entry), "New Folder");
+        gtk_box_append(GTK_BOX(vbox), entry);
+        
+        GtkWidget* btn_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+        gtk_widget_set_halign(btn_box, GTK_ALIGN_END);
+        
+        GtkWidget* cancel_btn = gtk_button_new_with_label("Cancel");
+        g_signal_connect_swapped(cancel_btn, "clicked", G_CALLBACK(gtk_window_destroy), dialog);
+        gtk_box_append(GTK_BOX(btn_box), cancel_btn);
+        
+        GtkWidget* create_btn = gtk_button_new_with_label("Create");
+        gtk_widget_add_css_class(create_btn, "suggested-action");
+        
+        // Store current cloud path for callback
+        char* path_copy = g_strdup(self->current_cloud_path_.c_str());
+        g_object_set_data_full(G_OBJECT(create_btn), "cloud_path", path_copy, g_free);
+        g_object_set_data(G_OBJECT(create_btn), "app_window", self);
+        g_object_set_data(G_OBJECT(create_btn), "entry", entry);
+        
+        g_signal_connect(create_btn, "clicked", G_CALLBACK(+[](GtkButton* btn, gpointer) {
+            auto* self = static_cast<AppWindow*>(g_object_get_data(G_OBJECT(btn), "app_window"));
+            auto* entry = GTK_ENTRY(g_object_get_data(G_OBJECT(btn), "entry"));
+            const char* path = static_cast<const char*>(g_object_get_data(G_OBJECT(btn), "cloud_path"));
+            
+            std::string folder_name = gtk_editable_get_text(GTK_EDITABLE(entry));
+            if (folder_name.empty()) {
+                folder_name = "New Folder";
+            }
+            
+            // Build full cloud path
+            std::string current_path = path ? path : "/";
+            if (current_path.back() != '/') current_path += "/";
+            std::string new_folder_path = current_path + folder_name;
+            
+            // Create folder using rclone mkdir
+            std::string cmd = "mkdir proton:" + AppWindowHelpers::shell_escape(new_folder_path);
+            self->append_log("[CloudBrowser] Creating folder: " + new_folder_path);
+            
+            std::thread([self, cmd, new_folder_path]() {
+                std::string output = AppWindowHelpers::exec_rclone(cmd);
+                
+                g_idle_add(+[](gpointer data) -> gboolean {
+                    auto* self = static_cast<AppWindow*>(data);
+                    self->append_log("[CloudBrowser] Folder created successfully");
+                    self->refresh_cloud_files_async(true);
+                    return G_SOURCE_REMOVE;
+                }, self);
+            }).detach();
+            
+            GtkWidget* dlg = gtk_widget_get_ancestor(GTK_WIDGET(btn), GTK_TYPE_WINDOW);
+            if (dlg) gtk_window_destroy(GTK_WINDOW(dlg));
+        }), nullptr);
+        
+        gtk_box_append(GTK_BOX(btn_box), create_btn);
+        gtk_box_append(GTK_BOX(vbox), btn_box);
+        
+        gtk_window_present(GTK_WINDOW(dialog));
+    }), this);
+    gtk_box_append(GTK_BOX(cloud_path_box), new_folder_btn);
+    
     gtk_box_append(GTK_BOX(cloud_box), cloud_path_box);
     
     // Cloud file list

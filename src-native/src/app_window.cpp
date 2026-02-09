@@ -811,11 +811,21 @@ void AppWindow::build_window() {
     gtk_window_set_title(GTK_WINDOW(window_), "Proton Drive");
     gtk_window_set_default_size(GTK_WINDOW(window_), 1200, 750);
     
-    // Connect close handler - hide instead of destroy
+    // Connect close handler - hide to tray or actually quit based on setting
     g_signal_connect(window_, "close-request", G_CALLBACK(+[](GtkWindow* /*win*/, gpointer data) -> gboolean {
         auto* self = static_cast<AppWindow*>(data);
-        self->hide();
-        return TRUE; // Prevent destruction
+        auto& settings = proton::SettingsManager::getInstance();
+        if (settings.get_minimize_to_tray()) {
+            self->hide();
+            return TRUE; // Prevent destruction, keep running in tray
+        } else {
+            // Actually quit the application
+            GApplication* app = g_application_get_default();
+            if (app) {
+                g_application_quit(app);
+            }
+            return FALSE; // Allow destruction
+        }
     }), this);
     
     // Main horizontal box: sidebar | content
@@ -910,6 +920,21 @@ void AppWindow::build_window() {
     }), this);
     gtk_box_append(GTK_BOX(nav_box), nav_sync);
     
+    // Cloud Browser
+    GtkWidget* nav_browser = create_nav_item("folder-remote-symbolic", "Cloud Browser", false);
+    g_object_set_data(G_OBJECT(nav_browser), "nav_buttons", nav_buttons);
+    g_signal_connect(nav_browser, "toggled", G_CALLBACK(+[](GtkToggleButton* btn, gpointer data) {
+        if (gtk_toggle_button_get_active(btn)) {
+            auto* self = static_cast<AppWindow*>(data);
+            gtk_stack_set_visible_child_name(GTK_STACK(self->main_stack_), "browser");
+            auto* buttons = static_cast<std::vector<GtkWidget*>*>(g_object_get_data(G_OBJECT(btn), "nav_buttons"));
+            for (GtkWidget* other : *buttons) {
+                if (GTK_WIDGET(btn) != other) gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(other), FALSE);
+            }
+        }
+    }), this);
+    gtk_box_append(GTK_BOX(nav_box), nav_browser);
+    
     // Devices
     GtkWidget* nav_devices = create_nav_item("computer-symbolic", "Devices", false);
     g_object_set_data(G_OBJECT(nav_devices), "nav_buttons", nav_buttons);
@@ -925,21 +950,6 @@ void AppWindow::build_window() {
         }
     }), this);
     gtk_box_append(GTK_BOX(nav_box), nav_devices);
-    
-    // Cloud Browser
-    GtkWidget* nav_browser = create_nav_item("folder-remote-symbolic", "Cloud Browser", false);
-    g_object_set_data(G_OBJECT(nav_browser), "nav_buttons", nav_buttons);
-    g_signal_connect(nav_browser, "toggled", G_CALLBACK(+[](GtkToggleButton* btn, gpointer data) {
-        if (gtk_toggle_button_get_active(btn)) {
-            auto* self = static_cast<AppWindow*>(data);
-            gtk_stack_set_visible_child_name(GTK_STACK(self->main_stack_), "browser");
-            auto* buttons = static_cast<std::vector<GtkWidget*>*>(g_object_get_data(G_OBJECT(btn), "nav_buttons"));
-            for (GtkWidget* other : *buttons) {
-                if (GTK_WIDGET(btn) != other) gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(other), FALSE);
-            }
-        }
-    }), this);
-    gtk_box_append(GTK_BOX(nav_box), nav_browser);
     
     // Separator
     GtkWidget* nav_sep = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
@@ -1456,12 +1466,23 @@ void AppWindow::build_window() {
     gtk_list_box_set_selection_mode(GTK_LIST_BOX(profiles_list_), GTK_SELECTION_NONE);
     gtk_box_append(GTK_BOX(profiles_section), profiles_list_);
     
+    GtkWidget* profile_button_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    
     GtkWidget* add_profile_btn = gtk_button_new_with_label("+ Add Profile");
     gtk_widget_add_css_class(add_profile_btn, "flat-button");
     g_signal_connect(add_profile_btn, "clicked", G_CALLBACK(+[](GtkButton*, gpointer data) {
         static_cast<AppWindow*>(data)->on_add_profile_clicked();
     }), this);
-    gtk_box_append(GTK_BOX(profiles_section), add_profile_btn);
+    gtk_box_append(GTK_BOX(profile_button_box), add_profile_btn);
+    
+    GtkWidget* test_connection_btn = gtk_button_new_with_label("Test Connection");
+    gtk_widget_add_css_class(test_connection_btn, "flat-button");
+    g_signal_connect(test_connection_btn, "clicked", G_CALLBACK(+[](GtkButton*, gpointer data) {
+        static_cast<AppWindow*>(data)->on_test_connection_clicked();
+    }), this);
+    gtk_box_append(GTK_BOX(profile_button_box), test_connection_btn);
+    
+    gtk_box_append(GTK_BOX(profiles_section), profile_button_box);
     
     gtk_box_append(GTK_BOX(settings_content), profiles_section);
     
@@ -1583,6 +1604,31 @@ void AppWindow::build_window() {
     GtkWidget* autostart_label = gtk_label_new("Start at login");
     gtk_box_append(GTK_BOX(autostart_row), autostart_label);
     gtk_box_append(GTK_BOX(sync_settings_section), autostart_row);
+    
+    // Close to tray toggle
+    GtkWidget* tray_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+    GtkWidget* tray_sw = gtk_switch_new();
+    gtk_switch_set_active(GTK_SWITCH(tray_sw), settings.get_minimize_to_tray());
+    g_signal_connect(tray_sw, "state-set", G_CALLBACK(+[](GtkSwitch*, gboolean state, gpointer data) -> gboolean {
+        auto* app = static_cast<AppWindow*>(data);
+        auto& s = proton::SettingsManager::getInstance();
+        s.set_minimize_to_tray(state);
+        app->append_log(std::string("[Settings] Close to tray ") + (state ? "enabled (minimize on close)" : "disabled (quit on close)"));
+        return FALSE;
+    }), this);
+    gtk_box_append(GTK_BOX(tray_row), tray_sw);
+    
+    GtkWidget* tray_vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+    GtkWidget* tray_label = gtk_label_new("Minimize to tray on close");
+    gtk_label_set_xalign(GTK_LABEL(tray_label), 0);
+    gtk_box_append(GTK_BOX(tray_vbox), tray_label);
+    GtkWidget* tray_desc = gtk_label_new("When disabled, closing the window will quit the application");
+    gtk_widget_add_css_class(tray_desc, "dim-label");
+    gtk_widget_add_css_class(tray_desc, "caption");
+    gtk_label_set_xalign(GTK_LABEL(tray_desc), 0);
+    gtk_box_append(GTK_BOX(tray_vbox), tray_desc);
+    gtk_box_append(GTK_BOX(tray_row), tray_vbox);
+    gtk_box_append(GTK_BOX(sync_settings_section), tray_row);
     
     // Desktop notifications toggle
     GtkWidget* notify_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);

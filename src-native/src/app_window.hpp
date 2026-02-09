@@ -283,6 +283,8 @@ private:
     void on_stop_clicked();
     void on_add_sync_clicked();
     void on_add_profile_clicked();
+    void on_edit_profile_clicked(const std::string& profile_name);
+    void on_test_connection_clicked();
     void on_settings_clicked();
     void on_browse_clicked();
     

@@ -5,6 +5,8 @@
 #include <cstdlib>
 #include <sys/stat.h>
 #include <filesystem>
+#include <unistd.h>
+#include <linux/limits.h>
 
 namespace proton {
 
@@ -225,19 +227,49 @@ void SettingsManager::set_start_on_login(bool enabled) {
     
     if (enabled) {
         std::filesystem::create_directories(autostart_dir);
+        
+        // Get actual executable path from /proc/self/exe
+        char exe_path[PATH_MAX];
+        ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+        std::string exec_path = "/usr/bin/proton-drive";  // fallback
+        if (len != -1) {
+            exe_path[len] = '\0';
+            exec_path = exe_path;
+        }
+        
+        // Write XDG-compliant autostart desktop entry
+        // Works across display managers: GNOME, KDE Plasma, XFCE, Cinnamon,
+        // MATE, LXQt, Budgie, Deepin, etc.
         std::ofstream file(autostart_file);
         if (file.is_open()) {
             file << "[Desktop Entry]\n";
             file << "Type=Application\n";
+            file << "Version=1.5\n";
             file << "Name=Proton Drive\n";
-            file << "Exec=/usr/bin/proton-drive\n";
+            file << "GenericName=Cloud Storage\n";
+            file << "Comment=Proton Drive sync client\n";
+            file << "Exec=" << exec_path << "\n";
             file << "Icon=proton-drive\n";
-            file << "X-GNOME-Autostart-enabled=true\n";
+            file << "Terminal=false\n";
+            file << "Categories=Network;FileTransfer;\n";
             file << "StartupWMClass=proton-drive\n";
+            file << "StartupNotify=false\n";
+            // GNOME
+            file << "X-GNOME-Autostart-enabled=true\n";
+            // KDE Plasma
+            file << "X-KDE-autostart-after=panel\n";
+            // MATE
+            file << "X-MATE-Autostart-enabled=true\n";
+            file << "Hidden=false\n";
             file.close();
+            Logger::info("[Settings] Autostart desktop entry written: " + autostart_file);
+            Logger::info("[Settings] Exec path: " + exec_path);
+        } else {
+            Logger::error("[Settings] Failed to write autostart file: " + autostart_file);
         }
     } else {
         std::filesystem::remove(autostart_file);
+        Logger::info("[Settings] Autostart desktop entry removed");
     }
 }
 

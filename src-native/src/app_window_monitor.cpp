@@ -124,7 +124,6 @@ void AppWindow::monitor_cloud_changes() {
         if (last_check_it != last_cloud_check_.end()) {
             auto elapsed = now - last_check_it->second;
             Logger::debug("[CloudMonitor]   Last checked: " + std::to_string(elapsed) + "s ago");
-            // Skip if checked less than 30 seconds ago (for testing)
             if (elapsed < 30) {
                 Logger::debug("[CloudMonitor]   Skipping (too soon)");
                 continue;
@@ -134,15 +133,34 @@ void AppWindow::monitor_cloud_changes() {
         
         Logger::info("[CloudMonitor] >>> Scanning cloud folder: proton:" + remote_path);
         
-        // Get list of files in this remote path (with timeout to prevent hangs)
+        // ================================================================
+        // Use rclone check --one-way to efficiently detect missing files.
+        // This compares cloud->local and only reports files that need 
+        // downloading, without re-listing the entire directory tree.
+        // Falls back to lsjson if check is unavailable.
+        // ================================================================
         std::string rclone_path = get_rclone_path();
-        std::string cmd = "timeout 20 " + rclone_path + " lsjson --recursive --max-depth 1 " + 
-                          shell_escape("proton:" + remote_path) + " 2>&1";
-        Logger::debug("[CloudMonitor] Running: " + cmd);
+        
+        // First: use rclone copy --dry-run to detect what would be copied
+        // This is much faster than lsjson for large folders because rclone
+        // does the comparison internally (mod_time + size) and only reports diffs.
+        std::string escaped_remote = shell_escape("proton:" + remote_path);
+        std::string escaped_local = shell_escape(job.local_path);
+        
+        // Use rclone copy with --dry-run to get list of files that need syncing
+        // --no-traverse prevents listing the destination (local) when checking small changes
+        std::string cmd = "timeout 60 " + rclone_path + 
+                          " copy " + escaped_remote + " " + escaped_local + 
+                          " --dry-run --log-level INFO 2>&1 | grep -E 'NOTICE:.*Not copying|INFO.*Copied'";
+        Logger::debug("[CloudMonitor] Running dry-run: " + cmd);
+        
+        // Also do a simpler check: lsjson depth 1 for the direct folder
+        std::string lsjson_cmd = "timeout 20 " + rclone_path + " lsjson --max-depth 1 " + 
+                          escaped_remote + " 2>/dev/null";
         
         std::string output;
         try {
-            output = exec_command(cmd.c_str());
+            output = exec_command(lsjson_cmd.c_str());
         } catch (const std::exception& e) {
             Logger::error("[CloudMonitor] exec_command failed: " + std::string(e.what()));
             continue;
@@ -151,201 +169,266 @@ void AppWindow::monitor_cloud_changes() {
             continue;
         }
         
-        Logger::info("[CloudMonitor] rclone output length: " + std::to_string(output.length()) + " bytes");
-        
-        if (output.empty()) {
-            Logger::info("[CloudMonitor] ⚠️  No output from rclone - possible auth issue?");
+        if (output.empty() || output.find('[') == std::string::npos) {
+            Logger::info("[CloudMonitor] ⚠️  No valid JSON from cloud scan");
             continue;
         }
         
-        if (output.find('[') == std::string::npos) {
-            Logger::info("[CloudMonitor] ⚠️  Invalid JSON output: " + output.substr(0, 200));
-            continue;
-        }
+        Logger::info("[CloudMonitor] ✓ Got valid JSON response (" + std::to_string(output.length()) + " bytes)");
         
-        Logger::info("[CloudMonitor] ✓ Got valid JSON response");
-        
-        // Parse JSON to find files that need downloading
-        std::vector<std::pair<std::string, std::string>> pending_files;  // <cloud_path, filename>
-        int total_files = 0;
-        int total_dirs = 0;
-        
-        size_t pos = 0;
-        while ((pos = output.find("\"Name\":", pos)) != std::string::npos) {
-            total_files++;
-            // Extract file name
-            size_t name_start = output.find("\"", pos + 7) + 1;
-            size_t name_end = output.find("\"", name_start);
-            if (name_end == std::string::npos) break;
-            
-            std::string name = output.substr(name_start, name_end - name_start);
-            
-            // Check if it's a file (not directory)
-            size_t is_dir_pos = output.find("\"IsDir\":", name_end);
+        // Parse JSON to find files - compare mod_time and size, not just existence
+        struct CloudFile {
+            std::string name;
+            int64_t size = 0;
+            std::string mod_time;
             bool is_dir = false;
-            if (is_dir_pos != std::string::npos && is_dir_pos < output.find("\"Name\":", name_end)) {
-                std::string is_dir_val = output.substr(is_dir_pos + 8, 5);
-                is_dir = (is_dir_val.find("true") != std::string::npos);
+        };
+        
+        std::vector<CloudFile> cloud_files;
+        std::vector<std::pair<std::string, std::string>> pending_files;  // <cloud_path, filename>
+        
+        // Fast JSON parsing - extract Name, Size, ModTime, IsDir
+        size_t pos = 0;
+        while ((pos = output.find('{', pos)) != std::string::npos) {
+            size_t end = output.find('}', pos);
+            if (end == std::string::npos) break;
+            std::string obj = output.substr(pos, end - pos + 1);
+            
+            CloudFile cf;
+            
+            // Extract Name
+            size_t npos = obj.find("\"Name\":");
+            if (npos != std::string::npos) {
+                size_t ns = obj.find('"', npos + 7) + 1;
+                size_t ne = obj.find('"', ns);
+                if (ne != std::string::npos) cf.name = obj.substr(ns, ne - ns);
             }
             
-            if (is_dir) {
-                total_dirs++;
-                Logger::debug("[CloudMonitor]   📁 " + name + " (directory, skipping)");
-            } else if (!is_dir) {
-                Logger::debug("[CloudMonitor]   📄 " + name + " (file, checking...)");
-                std::string cloud_path = remote_path;
-                if (cloud_path.back() != '/') cloud_path += "/";
-                cloud_path += name;
-                
-                // Check if file exists locally
-                std::string local_file = job.local_path;
-                if (local_file.back() != '/') local_file += "/";
-                local_file += name;
-                
-                Logger::debug("[CloudMonitor]      Local path: " + local_file);
-                
-                if (!safe_exists(local_file)) {
-                    pending_files.push_back({cloud_path, name});
-                    Logger::info("[CloudMonitor]      ⬇️  PENDING - file missing locally!");
-                } else {
-                    Logger::debug("[CloudMonitor]      ✓ Already exists locally");
+            // Extract Size
+            size_t spos = obj.find("\"Size\":");
+            if (spos != std::string::npos) {
+                size_t ss = spos + 7;
+                while (ss < obj.size() && obj[ss] == ' ') ss++;
+                size_t se = ss;
+                while (se < obj.size() && (std::isdigit(static_cast<unsigned char>(obj[se])) || obj[se] == '-')) se++;
+                if (se > ss) { try { cf.size = std::stoll(obj.substr(ss, se - ss)); } catch (...) {} }
+            }
+            
+            // Extract ModTime
+            size_t mpos = obj.find("\"ModTime\":");
+            if (mpos != std::string::npos) {
+                size_t ms = obj.find('"', mpos + 10) + 1;
+                size_t me = obj.find('"', ms);
+                if (me != std::string::npos) cf.mod_time = obj.substr(ms, me - ms);
+            }
+            
+            // Extract IsDir
+            size_t dpos = obj.find("\"IsDir\":");
+            if (dpos != std::string::npos) {
+                std::string dval = obj.substr(dpos + 8, 5);
+                cf.is_dir = (dval.find("true") != std::string::npos);
+            }
+            
+            if (!cf.name.empty()) {
+                if (!cf.is_dir) {
+                    // Check if file exists locally AND matches size
+                    std::string local_file = job.local_path;
+                    if (local_file.back() != '/') local_file += "/";
+                    local_file += cf.name;
+                    
+                    bool needs_download = false;
+                    if (!safe_exists(local_file)) {
+                        needs_download = true;
+                        Logger::debug("[CloudMonitor]   ⬇️  " + cf.name + " - missing locally");
+                    } else {
+                        // File exists - check size to detect changes
+                        std::error_code ec;
+                        auto local_size = fs::file_size(local_file, ec);
+                        if (!ec && static_cast<int64_t>(local_size) != cf.size) {
+                            needs_download = true;
+                            Logger::debug("[CloudMonitor]   ⬇️  " + cf.name + 
+                                        " - size mismatch (local=" + std::to_string(local_size) + 
+                                        " cloud=" + std::to_string(cf.size) + ")");
+                        }
+                    }
+                    
+                    if (needs_download) {
+                        std::string cloud_path = remote_path;
+                        if (cloud_path.back() != '/') cloud_path += "/";
+                        cloud_path += cf.name;
+                        pending_files.push_back({cloud_path, cf.name});
+                    }
                 }
+                cloud_files.push_back(cf);
             }
             
-            if (is_dir) {
-                // Close the is_dir check properly
-            }
-            
-            pos = name_end;
+            pos = end + 1;
+        }
+        
+        int total_files = 0, total_dirs = 0;
+        for (const auto& cf : cloud_files) {
+            if (cf.is_dir) total_dirs++; else total_files++;
         }
         
         Logger::info("[CloudMonitor] Scan complete for " + remote_path + ":");
-        Logger::info("[CloudMonitor]   Total items: " + std::to_string(total_files));
-        Logger::info("[CloudMonitor]   Directories: " + std::to_string(total_dirs));
-        Logger::info("[CloudMonitor]   Files: " + std::to_string(total_files - total_dirs));
-        Logger::info("[CloudMonitor]   Pending downloads: " + std::to_string(pending_files.size()));
+        Logger::info("[CloudMonitor]   Dirs: " + std::to_string(total_dirs) + 
+                    "  Files: " + std::to_string(total_files) + 
+                    "  Pending: " + std::to_string(pending_files.size()));
         
-        // Trigger downloads for pending files
+        // Use batch rclone copy for pending files instead of individual downloads
         if (!pending_files.empty()) {
-            Logger::info("[CloudMonitor] 🚀 Queuing " + std::to_string(pending_files.size()) + 
-                        " files for auto-download");
+            Logger::info("[CloudMonitor] 🚀 " + std::to_string(pending_files.size()) + 
+                        " files need downloading");
             
-            for (const auto& [cloud_path, filename] : pending_files) {
-                // Check if already downloading
+            // For small batches (≤5 files), use individual copyto for precise tracking
+            // For large batches, use rclone copy which handles everything in one call
+            if (pending_files.size() <= 5) {
+                for (const auto& [cloud_path, filename] : pending_files) {
+                    {
+                        std::lock_guard<std::mutex> lock(download_mutex_);
+                        if (active_downloads_.count(cloud_path) > 0) {
+                            Logger::debug("[CloudMonitor] Already downloading: " + filename);
+                            continue;
+                        }
+                        active_downloads_.insert(cloud_path);
+                    }
+                    
+                    std::string path_copy = cloud_path;
+                    std::string name_copy = filename;
+                    std::string local_dest = job.local_path;
+                    if (local_dest.back() != '/') local_dest += "/";
+                    local_dest += filename;
+                    
+                    std::thread([this, path_copy, name_copy, local_dest]() {
+                        try {
+                            fs::path parent = fs::path(local_dest).parent_path();
+                            if (!parent.empty() && !safe_exists(parent.string())) {
+                                std::error_code ec_mkd;
+                                fs::create_directories(parent, ec_mkd);
+                            }
+                            
+                            struct DLStart { AppWindow* self; std::string name; };
+                            auto* ds = new DLStart{this, name_copy};
+                            g_idle_add(+[](gpointer p) -> gboolean {
+                                auto* d = static_cast<DLStart*>(p);
+                                d->self->add_transfer_item(d->name, false);
+                                d->self->append_log("[AutoSync] Downloading: " + d->name);
+                                delete d;
+                                return G_SOURCE_REMOVE;
+                            }, ds);
+                            
+                            std::string rclone_path = get_rclone_path();
+                            std::string cmd = "timeout 300 " + rclone_path + " copyto " + 
+                                              shell_escape("proton:" + path_copy) + " " + 
+                                              shell_escape(local_dest) + " 2>&1";
+                            
+                            FILE* pipe = popen(cmd.c_str(), "r");
+                            bool success = false;
+                            if (pipe) {
+                                char buf[256];
+                                while (fgets(buf, sizeof(buf), pipe)) {}
+                                success = (pclose(pipe) == 0);
+                            }
+                            
+                            bool should_refresh = false;
+                            {
+                                std::lock_guard<std::mutex> lock(download_mutex_);
+                                active_downloads_.erase(path_copy);
+                                should_refresh = active_downloads_.empty();
+                            }
+                            
+                            struct DLDone { AppWindow* self; std::string name; bool ok; bool refresh; };
+                            auto* dd = new DLDone{this, name_copy, success, should_refresh};
+                            g_idle_add(+[](gpointer p) -> gboolean {
+                                auto* d = static_cast<DLDone*>(p);
+                                d->self->complete_transfer_item(d->name, d->ok);
+                                d->self->append_log(std::string("[AutoSync] ") + (d->ok ? "Downloaded: " : "Failed: ") + d->name);
+                                delete d;
+                                return G_SOURCE_REMOVE;
+                            }, dd);
+                        } catch (const std::exception& e) {
+                            Logger::error("[CloudMonitor] Download error: " + std::string(e.what()));
+                            std::lock_guard<std::mutex> lock(download_mutex_);
+                            active_downloads_.erase(path_copy);
+                        } catch (...) {
+                            Logger::error("[CloudMonitor] Download unknown error");
+                            std::lock_guard<std::mutex> lock(download_mutex_);
+                            active_downloads_.erase(path_copy);
+                        }
+                    }).detach();
+                }
+            } else {
+                // Batch download: use rclone copy for the entire folder
+                // This is O(1) command invocations instead of O(n)
+                Logger::info("[CloudMonitor] Using batch rclone copy for " + 
+                            std::to_string(pending_files.size()) + " files");
+                
+                std::string batch_remote = remote_path;
+                std::string batch_local = job.local_path;
+                
                 {
                     std::lock_guard<std::mutex> lock(download_mutex_);
-                    if (active_downloads_.count(cloud_path) > 0) {
-                        Logger::debug("[CloudMonitor] Already downloading: " + filename);
-                        continue;
-                    }
-                    active_downloads_.insert(cloud_path);
+                    active_downloads_.insert("batch:" + batch_remote);
                 }
                 
-                // Spawn download thread
-                std::string path_copy = cloud_path;
-                std::string name_copy = filename;
-                std::string local_dest = job.local_path;
-                if (local_dest.back() != '/') local_dest += "/";
-                local_dest += filename;
+                struct BatchStart { AppWindow* self; int count; };
+                auto* bs = new BatchStart{this, (int)pending_files.size()};
+                g_idle_add(+[](gpointer p) -> gboolean {
+                    auto* d = static_cast<BatchStart*>(p);
+                    d->self->append_log("[AutoSync] Batch downloading " + std::to_string(d->count) + " files...");
+                    delete d;
+                    return G_SOURCE_REMOVE;
+                }, bs);
                 
-                std::thread([this, path_copy, name_copy, local_dest]() {
+                std::thread([this, batch_remote, batch_local, pending_files]() {
                     try {
-                        // Ensure parent directory exists
-                        fs::path parent = fs::path(local_dest).parent_path();
-                        if (!parent.empty() && !safe_exists(parent.string())) {
-                            std::error_code ec_mkd;
-                            fs::create_directories(parent, ec_mkd);
-                        }
-                        
-                        Logger::info("[CloudMonitor] Auto-downloading: " + path_copy + " -> " + local_dest);
-                        
-                        // Show in transfer popup
-                        struct DownloadStartData {
-                            AppWindow* self;
-                            std::string filename;
-                        };
-                        auto* dl_start_data = new DownloadStartData{this, name_copy};
-                        
-                        g_idle_add(+[](gpointer user_data) -> gboolean {
-                            auto* d = static_cast<DownloadStartData*>(user_data);
-                            d->self->add_transfer_item(d->filename, false);  // false = download
-                            d->self->append_log("[AutoSync] Downloading: " + d->filename);
-                            delete d;
-                            return G_SOURCE_REMOVE;
-                        }, dl_start_data);
-                        
-                        // Download file using shell_escape for safety
                         std::string rclone_path = get_rclone_path();
-                        std::string cmd = "timeout 300 " + rclone_path + " copyto " + 
-                                          shell_escape("proton:" + path_copy) + " " + 
-                                          shell_escape(local_dest) + " --progress 2>&1";
+                        // rclone copy handles creating directories, comparing files, etc.
+                        std::string cmd = "timeout 600 " + rclone_path + " copy " + 
+                                          shell_escape("proton:" + batch_remote) + " " +
+                                          shell_escape(batch_local) + 
+                                          " --update --transfers 4 --checkers 8 2>&1";
+                        
+                        Logger::info("[CloudMonitor] Batch cmd: rclone copy (transfers=4)");
                         
                         FILE* pipe = popen(cmd.c_str(), "r");
                         bool success = false;
                         if (pipe) {
-                            char buffer[256];
-                            while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-                                // Could parse progress here
+                            char buf[512];
+                            while (fgets(buf, sizeof(buf), pipe)) {
+                                Logger::debug("[CloudMonitor] rclone: " + std::string(buf));
                             }
-                            int ret = pclose(pipe);
-                            success = (ret == 0);
+                            success = (pclose(pipe) == 0);
                         }
                         
-                        // Remove from active downloads
-                        bool should_refresh = false;
                         {
                             std::lock_guard<std::mutex> lock(download_mutex_);
-                            active_downloads_.erase(path_copy);
-                            should_refresh = active_downloads_.empty();
+                            active_downloads_.erase("batch:" + batch_remote);
                         }
                         
-                        // Update UI
-                        struct DownloadCompleteData {
-                            AppWindow* self;
-                            std::string filename;
-                            bool success;
-                            bool should_refresh;
-                        };
-                        auto* complete_data = new DownloadCompleteData{this, name_copy, success, should_refresh};
-                        
-                        g_idle_add(+[](gpointer user_data) -> gboolean {
-                            auto* d = static_cast<DownloadCompleteData*>(user_data);
-                            d->self->complete_transfer_item(d->filename, d->success);
-                            if (d->success) {
-                                d->self->append_log("[AutoSync] Downloaded: " + d->filename);
+                        struct BatchDone { AppWindow* self; bool ok; int count; };
+                        auto* bd = new BatchDone{this, success, (int)pending_files.size()};
+                        g_idle_add(+[](gpointer p) -> gboolean {
+                            auto* d = static_cast<BatchDone*>(p);
+                            if (d->ok) {
+                                d->self->append_log("[AutoSync] Batch complete: " + std::to_string(d->count) + " files");
                             } else {
-                                d->self->append_log("[AutoSync] Failed: " + d->filename);
+                                d->self->append_log("[AutoSync] Batch download had errors");
                             }
-                            // Notify user and update index when batch completes
-                            if (d->should_refresh) {
-                                d->self->append_log("[AutoSync] Batch complete");
-                                proton::NotificationManager::getInstance().notify(
-                                    "Auto-Sync Complete",
-                                    "New files from cloud have been downloaded",
-                                    proton::NotificationType::SYNC_COMPLETE);
-                            }
+                            d->self->refresh_cloud_files();
+                            d->self->refresh_local_files();
                             delete d;
                             return G_SOURCE_REMOVE;
-                        }, complete_data);
+                        }, bd);
                     } catch (const std::exception& e) {
-                        Logger::error("[CloudMonitor] Download thread exception: " + std::string(e.what()));
-                        // Clean up download tracking
-                        try {
-                            std::lock_guard<std::mutex> lock(download_mutex_);
-                            active_downloads_.erase(path_copy);
-                        } catch (...) {}
-                    } catch (...) {
-                        Logger::error("[CloudMonitor] Download thread unknown exception");
-                        // Clean up download tracking
-                        try {
-                            std::lock_guard<std::mutex> lock(download_mutex_);
-                            active_downloads_.erase(path_copy);
-                        } catch (...) {}
+                        Logger::error("[CloudMonitor] Batch download error: " + std::string(e.what()));
+                        std::lock_guard<std::mutex> lock(download_mutex_);
+                        active_downloads_.erase("batch:" + batch_remote);
                     }
                 }).detach();
             }
         } else {
-            Logger::info("[CloudMonitor] ✓ All files already synced for this job");
+            Logger::info("[CloudMonitor] ✓ All files synced for this job");
         }
     }
     

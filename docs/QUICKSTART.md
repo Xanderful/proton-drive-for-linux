@@ -6,7 +6,16 @@ Get Proton Drive Linux running and syncing files in less than 5 minutes.
 
 - Linux (Debian, Ubuntu, Fedora, Arch, or any distribution)
 - Proton Drive account (free or paid)
+- **Proton Sentinel disabled** (or whitelisted via support ticket) - [see account security settings](https://account.proton.me/u/0/account-password)
 - Proton Drive Linux installed ([see installation](../README.md#-installation))
+
+### ⚠️ Important: Proton Sentinel
+
+If you have **Proton Sentinel** enabled, it may block sync operations. Either:
+- Disable it in your [account settings](https://account.proton.me) → Security, OR
+- Contact Proton Support to whitelist third-party API access
+
+See [SYNC_SETUP.md](../SYNC_SETUP.md#%EF%B8%8F-proton-sentinel-warning) for details.
 
 ---
 

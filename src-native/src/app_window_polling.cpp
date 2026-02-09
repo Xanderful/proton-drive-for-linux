@@ -564,11 +564,8 @@ void AppWindow::poll_sync_activity() {
         if (current_syncs.find(path) == current_syncs.end()) {
             append_log("[Sync] Completed: " + path);
             show_toast("\u2705 Sync complete: " + path);
-            // Notify user via desktop notification
-            proton::NotificationManager::getInstance().notify(
-                "Sync Complete", 
-                "Finished syncing: " + path,
-                proton::NotificationType::SYNC_COMPLETE);
+            // Don't send desktop notification for successful completion
+            // (only errors trigger notifications, success is shown in UI/logs)
             // Refresh both cloud and local browsers when sync completes
             refresh_local_files();
             refresh_cloud_files();

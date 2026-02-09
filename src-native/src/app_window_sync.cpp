@@ -50,10 +50,22 @@ void AppWindow::refresh_profiles() {
             gtk_label_set_xalign(GTK_LABEL(label), 0);
             gtk_widget_set_hexpand(label, TRUE);
             
+            // Edit button
+            GtkWidget* edit_btn = gtk_button_new_from_icon_name("document-edit-symbolic");
+            gtk_widget_add_css_class(edit_btn, "flat-button");
+            gtk_widget_set_tooltip_text(edit_btn, "Edit profile (update 2FA, password)");
+            g_object_set_data_full(G_OBJECT(edit_btn), "profile_name", g_strdup(remote.c_str()), g_free);
+            g_signal_connect(edit_btn, "clicked", G_CALLBACK(+[](GtkButton* btn, gpointer) {
+                const char* name = static_cast<const char*>(g_object_get_data(G_OBJECT(btn), "profile_name"));
+                if (name) {
+                    AppWindow::getInstance().on_edit_profile_clicked(std::string(name));
+                }
+            }), nullptr);
+            
+            // Delete button
             GtkWidget* del_btn = gtk_button_new_from_icon_name("user-trash-symbolic");
             gtk_widget_add_css_class(del_btn, "flat-button");
-            
-            // Store remote name for deletion
+            gtk_widget_set_tooltip_text(del_btn, "Delete profile");
             g_object_set_data_full(G_OBJECT(del_btn), "profile_name", g_strdup(remote.c_str()), g_free);
             g_signal_connect(del_btn, "clicked", G_CALLBACK(+[](GtkButton* btn, gpointer) {
                 const char* name = static_cast<const char*>(g_object_get_data(G_OBJECT(btn), "profile_name"));
@@ -65,6 +77,7 @@ void AppWindow::refresh_profiles() {
             
             gtk_box_append(GTK_BOX(row), icon);
             gtk_box_append(GTK_BOX(row), label);
+            gtk_box_append(GTK_BOX(row), edit_btn);
             gtk_box_append(GTK_BOX(row), del_btn);
             
             gtk_list_box_append(GTK_LIST_BOX(profiles_list_), row);

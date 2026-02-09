@@ -38,6 +38,17 @@ Native C++/GTK4 desktop application for accessing and synchronizing files with P
 
 ## ⚠️ Important Limitations
 
+### Proton Sentinel May Block Syncing
+
+**If you have Proton Sentinel enabled on your account, it may block this application from syncing.**
+
+- **Symptom:** Authentication works, but sync operations fail or get blocked
+- **Cause:** Proton Sentinel flags third-party API access as suspicious activity
+- **Solution:** Either disable Proton Sentinel in your account settings, OR contact Proton Support to whitelist this application
+- **Support Ticket:** If you want to keep Sentinel enabled, you'll need to open a support ticket with Proton to request whitelisting for third-party rclone access
+
+**Note:** This is a Proton security feature, not a bug in this application. Official Proton clients don't have this limitation.
+
 ### Sync Behavior: Polling-Based, Not Real-Time Cloud-to-Local
 
 This app uses **rclone's polling mechanism** for synchronization, which has an important limitation:

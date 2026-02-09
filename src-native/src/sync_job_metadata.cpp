@@ -494,6 +494,21 @@ void SyncJobRegistry::updateJob(const SyncJobMetadata& job) {
 }
 
 void SyncJobRegistry::deleteJob(const std::string& job_id) {
+    // Also delete the corresponding .conf file to prevent re-import on restart
+    const char* home = std::getenv("HOME");
+    if (home) {
+        std::string conf_path = std::string(home) + "/.config/proton-drive/jobs/" + job_id + ".conf";
+        std::error_code ec;
+        if (fs::exists(conf_path, ec)) {
+            fs::remove(conf_path, ec);
+            if (ec) {
+                Logger::warn("[SyncJobRegistry] Failed to delete .conf file for " + job_id + ": " + ec.message());
+            } else {
+                Logger::info("[SyncJobRegistry] Deleted .conf file for " + job_id);
+            }
+        }
+    }
+    
     jobs_.erase(
         std::remove_if(jobs_.begin(), jobs_.end(),
             [&job_id](const SyncJobMetadata& job) {
